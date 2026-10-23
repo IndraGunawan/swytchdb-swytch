@@ -34,6 +34,7 @@ import (
 func handleXGroup(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 1 {
 		w.WriteWrongNumArguments("xgroup")
+
 		return
 	}
 
@@ -41,35 +42,40 @@ func handleXGroup(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 
 	switch subCmd {
 	case "CREATE":
-		return handleXGroupCreate(cmd, w, db)
+		return handleXGroupCreate(cmd, w)
 	case "DESTROY":
-		return handleXGroupDestroy(cmd, w, db)
+		return handleXGroupDestroy(cmd, w)
 	case "CREATECONSUMER":
-		return handleXGroupCreateConsumer(cmd, w, db)
+		return handleXGroupCreateConsumer(cmd, w)
 	case "DELCONSUMER":
-		return handleXGroupDelConsumer(cmd, w, db)
+		return handleXGroupDelConsumer(cmd, w)
 	case "SETID":
-		return handleXGroupSetID(cmd, w, db)
-	case "HELP":
+		return handleXGroupSetID(cmd, w)
+	case subcommandHelp:
 		if len(cmd.Args) > 1 {
 			w.WriteError("ERR wrong number of arguments for 'xgroup|help' command")
+
 			return
 		}
+
 		valid = true
 		runner = func() {
 			handleXGroupHelp(w)
 		}
+
 		return
 	default:
 		w.WriteError("ERR unknown subcommand '" + subCmd + "'. Try XGROUP HELP.")
+
 		return
 	}
 }
 
 // handleXGroupCreate handles XGROUP CREATE key group <id|$> [MKSTREAM] [ENTRIESREAD entries-read]
-func handleXGroupCreate(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
+func handleXGroupCreate(cmd *shared.Command, w *shared.Writer) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 4 {
 		w.WriteWrongNumArguments("xgroup|create")
+
 		return
 	}
 
@@ -78,8 +84,10 @@ func handleXGroupCreate(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 	idStr := string(cmd.Args[3])
 	keys = []string{key}
 
-	var mkStream bool
-	var entriesRead int64 = -1
+	var (
+		mkStream    bool
+		entriesRead int64 = -1
+	)
 
 	for i := 4; i < len(cmd.Args); i++ {
 		opt := string(shared.ToUpper(cmd.Args[i]))
@@ -90,20 +98,27 @@ func handleXGroupCreate(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			er, err := strconv.ParseInt(string(cmd.Args[i]), 10, 64)
 			if err != nil {
 				w.WriteError("ERR value is not an integer or out of range")
+
 				return
 			}
+
 			if er < -1 {
 				w.WriteError("ERR value for ENTRIESREAD must be positive or -1")
+
 				return
 			}
+
 			entriesRead = er
 		default:
 			w.WriteError("ERR syntax error")
+
 			return
 		}
 	}
@@ -113,24 +128,30 @@ func handleXGroupCreate(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 		snap, _, exists, wrongType, err := getStreamSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if exists && wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !exists {
 			if !mkStream {
 				w.WriteError("ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.")
+
 				return
 			}
 			// Create empty stream: emit type tag + an INSERT_OP to override any prior DEL REMOVE_OP.
 			// MetaEffect alone doesn't change snap.Op from REMOVE_OP.
 			if err := emitStreamTypeTag(cmd, key); err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
+
 			if err := cmd.Context.Emit(&pb.Effect{
 				Key: []byte(key),
 				Kind: &pb.Effect_Data{Data: &pb.DataEffect{
@@ -140,11 +161,13 @@ func handleXGroupCreate(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 				}},
 			}); err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
 			// Reset entries-added to 0 for the new empty stream
 			if err := setStreamEntriesAdded(cmd, key, 0); err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
 		}
@@ -152,11 +175,13 @@ func handleXGroupCreate(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 		// Check if group already exists
 		if groupExists(cmd, key, groupName) {
 			w.WriteError("BUSYGROUP Consumer Group name already exists")
+
 			return
 		}
 
 		// Parse last delivered ID
 		var lastDeliveredID shared.StreamID
+
 		switch idStr {
 		case "$":
 			if exists {
@@ -165,20 +190,25 @@ func handleXGroupCreate(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 					entries := snapshotToEntries(snap)
 					lastID = streamLastID(entries)
 				}
+
 				lastDeliveredID = lastID
 			}
-		case "0", "0-0":
+		case "0", zeroStreamID:
 			lastDeliveredID = shared.StreamID{}
 		default:
 			id, _, isSpecial, err := shared.ParseStreamID(idStr)
 			if err != nil {
 				w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 				return
 			}
+
 			if isSpecial {
 				w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 				return
 			}
+
 			lastDeliveredID = id
 		}
 
@@ -188,33 +218,39 @@ func handleXGroupCreate(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 			if cfgEA := getStreamEntriesAdded(cmd, key); cfgEA >= 0 {
 				ea = cfgEA
 			}
+
 			if entriesRead > ea {
 				entriesRead = ea
 			}
 		}
 
 		now := time.Now().UnixMilli()
+
 		metaRaw := encodeGroupMeta(lastDeliveredID, entriesRead, now)
 		if err := emitGroupInsert(cmd, key, groupName, metaRaw); err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
 
 		// Register the group name in the registry
 		if err := emitGroupRegistryInsert(cmd, key, groupName); err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
 
 		w.WriteSimpleString("OK")
 	}
+
 	return
 }
 
 // handleXGroupDestroy handles XGROUP DESTROY key group
-func handleXGroupDestroy(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
+func handleXGroupDestroy(cmd *shared.Command, w *shared.Writer) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 3 {
 		w.WriteWrongNumArguments("xgroup|destroy")
+
 		return
 	}
 
@@ -227,48 +263,59 @@ func handleXGroupDestroy(cmd *shared.Command, w *shared.Writer, db *shared.Datab
 		_, _, exists, wrongType, err := getStreamSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
 			w.WriteInteger(0)
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !groupExists(cmd, key, groupName) {
 			w.WriteInteger(0)
+
 			return
 		}
 
 		if err := emitGroupRemove(cmd, key, groupName); err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
 
 		// Remove PEL
 		if err := emitPELKeyRemove(cmd, key, groupName); err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
 
 		// Remove from registry
 		if err := emitGroupRegistryRemove(cmd, key, groupName); err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
 
 		w.WriteInteger(1)
 	}
+
 	return
 }
 
 // handleXGroupCreateConsumer handles XGROUP CREATECONSUMER key group consumer
-func handleXGroupCreateConsumer(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
+func handleXGroupCreateConsumer(cmd *shared.Command, w *shared.Writer) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 4 {
 		w.WriteWrongNumArguments("xgroup|createconsumer")
+
 		return
 	}
 
@@ -282,46 +329,58 @@ func handleXGroupCreateConsumer(cmd *shared.Command, w *shared.Writer, db *share
 		_, _, exists, wrongType, err := getStreamSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
 			w.WriteError("ERR The XGROUP subcommand requires the key to exist.")
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !groupExists(cmd, key, groupName) {
 			w.WriteError("NOGROUP No such consumer group '" + groupName + "' for key name '" + key + "'")
+
 			return
 		}
 
 		// Check if consumer already exists
 		gSnap, _, _ := getGroupSnapshot(cmd, key, groupName)
+
 		consumers := getConsumersFromGroup(gSnap)
 		if _, ok := consumers[consumerName]; ok {
 			w.WriteInteger(0)
+
 			return
 		}
 
 		now := time.Now().UnixMilli()
+
 		metaRaw := encodeConsumerMeta(now, 0)
 		if err := emitConsumerInsert(cmd, key, groupName, consumerName, metaRaw); err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
 
 		w.WriteInteger(1)
 	}
+
 	return
 }
 
 // handleXGroupDelConsumer handles XGROUP DELCONSUMER key group consumer
-func handleXGroupDelConsumer(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
+func handleXGroupDelConsumer(cmd *shared.Command, w *shared.Writer) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 4 {
 		w.WriteWrongNumArguments("xgroup|delconsumer")
+
 		return
 	}
 
@@ -332,54 +391,84 @@ func handleXGroupDelConsumer(cmd *shared.Command, w *shared.Writer, db *shared.D
 
 	valid = true
 	runner = func() {
+		savepoint := cmd.Context.TakeSavepoint()
+
+		succeeded := false
+		defer func() {
+			if !succeeded {
+				cmd.Context.RestoreSavepoint(savepoint)
+			}
+		}()
+
 		_, _, exists, wrongType, err := getStreamSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
 			w.WriteError("ERR The XGROUP subcommand requires the key to exist.")
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !groupExists(cmd, key, groupName) {
 			w.WriteError("NOGROUP No such consumer group '" + groupName + "' for key name '" + key + "'")
+
 			return
 		}
 
 		// Count pending entries for this consumer
-		pelSnap, _, _ := getPELSnapshot(cmd, key, groupName)
+		pelSnap, _, err := getPELSnapshot(cmd, key, groupName)
+		if err != nil {
+			w.WriteError(err.Error())
+
+			return
+		}
+
 		pendingCount := consumerPendingCount(pelSnap, consumerName)
 
 		// Remove pending entries for this consumer
 		if pelSnap != nil && pelSnap.NetAdds != nil {
-			for elemID, elem := range pelSnap.NetAdds {
-				consumer, _, _ := decodePELEntry(elem.Data.Decompress())
+			for elemID, elem := range pelSnap.GetNetAdds() {
+				consumer, _, _ := decodePELEntry(elem.GetData().Decompress())
 				if consumer == consumerName && len(elemID) == 16 {
 					id := decodeStreamElementID([]byte(elemID))
-					emitPELRemove(cmd, key, groupName, id)
+					if err := emitPELRemove(cmd, key, groupName, id); err != nil {
+						w.WriteError(err.Error())
+
+						return
+					}
 				}
 			}
 		}
 
 		if err := emitConsumerRemove(cmd, key, groupName, consumerName); err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
 
+		succeeded = true
+
 		w.WriteInteger(pendingCount)
 	}
+
 	return
 }
 
 // handleXGroupSetID handles XGROUP SETID key group <id|$> [ENTRIESREAD entries-read]
-func handleXGroupSetID(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
+func handleXGroupSetID(cmd *shared.Command, w *shared.Writer) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 4 {
 		w.WriteWrongNumArguments("xgroup|setid")
+
 		return
 	}
 
@@ -396,20 +485,27 @@ func handleXGroupSetID(cmd *shared.Command, w *shared.Writer, db *shared.Databas
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			er, err := strconv.ParseInt(string(cmd.Args[i]), 10, 64)
 			if err != nil {
 				w.WriteError("ERR value is not an integer or out of range")
+
 				return
 			}
+
 			if er < -1 {
 				w.WriteError("ERR value for ENTRIESREAD must be positive or -1")
+
 				return
 			}
+
 			entriesRead = er
 		} else {
 			w.WriteError("ERR syntax error")
+
 			return
 		}
 	}
@@ -419,23 +515,30 @@ func handleXGroupSetID(cmd *shared.Command, w *shared.Writer, db *shared.Databas
 		snap, _, exists, wrongType, err := getStreamSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
 			w.WriteError("ERR The XGROUP subcommand requires the key to exist.")
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !groupExists(cmd, key, groupName) {
 			w.WriteError("NOGROUP No such consumer group '" + groupName + "' for key name '" + key + "'")
+
 			return
 		}
 
 		var lastDeliveredID shared.StreamID
+
 		switch idStr {
 		case "$":
 			lastID, _, _, found := streamMetadata(snap)
@@ -443,46 +546,56 @@ func handleXGroupSetID(cmd *shared.Command, w *shared.Writer, db *shared.Databas
 				entries := snapshotToEntries(snap)
 				lastID = streamLastID(entries)
 			}
+
 			lastDeliveredID = lastID
-		case "0", "0-0", "-":
+		case "0", zeroStreamID, "-":
 			lastDeliveredID = shared.StreamID{}
 		default:
 			id, _, isSpecial, err := shared.ParseStreamID(idStr)
 			if err != nil {
 				w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 				return
 			}
+
 			if isSpecial {
 				w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 				return
 			}
+
 			lastDeliveredID = id
 		}
 
 		// Get existing group metadata for createdAt
 		gSnap, _, _ := getGroupSnapshot(cmd, key, groupName)
-		_, existingEntriesRead, existingCreatedAt, _ := getGroupMeta(gSnap)
+		_, existingEntriesRead, existingCreatedAt := getGroupMeta(gSnap)
 
 		finalEntriesRead := existingEntriesRead
+
 		if entriesRead >= 0 {
 			_, ea, _, _ := streamMetadata(snap)
 			if cfgEA := getStreamEntriesAdded(cmd, key); cfgEA >= 0 {
 				ea = cfgEA
 			}
+
 			if entriesRead > ea {
 				entriesRead = ea
 			}
+
 			finalEntriesRead = entriesRead
 		}
 
 		metaRaw := encodeGroupMeta(lastDeliveredID, finalEntriesRead, existingCreatedAt)
 		if err := emitGroupInsert(cmd, key, groupName, metaRaw); err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
 
 		w.WriteSimpleString("OK")
 	}
+
 	return
 }
 
@@ -504,10 +617,11 @@ func handleXGroupHelp(w *shared.Writer) {
 		"    Create a consumer named <consumername> in the group.",
 		"DELCONSUMER <key> <groupname> <consumername>",
 		"    Remove the specified consumer.",
-		"HELP",
+		subcommandHelp,
 		"    Print this help.",
 	}
 	w.WriteArray(len(help))
+
 	for _, line := range help {
 		w.WriteBulkStringStr(line)
 	}
@@ -517,6 +631,7 @@ func handleXGroupHelp(w *shared.Writer) {
 func handleXAck(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 3 {
 		w.WriteWrongNumArguments("xack")
+
 		return
 	}
 
@@ -529,8 +644,10 @@ func handleXAck(cmd *shared.Command, w *shared.Writer, db *shared.Database) (val
 		id, _, isSpecial, err := shared.ParseStreamID(string(cmd.Args[i]))
 		if err != nil || isSpecial {
 			w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 			return
 		}
+
 		ids = append(ids, id)
 	}
 
@@ -539,33 +656,42 @@ func handleXAck(cmd *shared.Command, w *shared.Writer, db *shared.Database) (val
 		_, _, exists, wrongType, err := getStreamSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
 			w.WriteInteger(0)
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !groupExists(cmd, key, groupName) {
 			w.WriteError("NOGROUP No such consumer group '" + groupName + "' for key name '" + key + "'")
+
 			return
 		}
 
 		pelSnap, _, _ := getPELSnapshot(cmd, key, groupName)
 
 		acked := int64(0)
+
 		for _, id := range ids {
-			elemID := string(encodeStreamElementID(id))
+			elemID := encodeStreamElementID(id)
 			if pelSnap != nil && pelSnap.NetAdds != nil {
-				if _, ok := pelSnap.NetAdds[elemID]; ok {
+				if _, ok := pelSnap.GetNetAdds()[string(elemID)]; ok {
 					if err := emitPELRemove(cmd, key, groupName, id); err != nil {
 						w.WriteError(err.Error())
+
 						return
 					}
+
 					acked++
 				}
 			}
@@ -573,6 +699,7 @@ func handleXAck(cmd *shared.Command, w *shared.Writer, db *shared.Database) (val
 
 		w.WriteInteger(acked)
 	}
+
 	return
 }
 
@@ -580,6 +707,7 @@ func handleXAck(cmd *shared.Command, w *shared.Writer, db *shared.Database) (val
 func handleXPending(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 2 {
 		w.WriteWrongNumArguments("xpending")
+
 		return
 	}
 
@@ -592,19 +720,25 @@ func handleXPending(cmd *shared.Command, w *shared.Writer, db *shared.Database) 
 		_, _, exists, wrongType, err := getStreamSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
 			w.WriteError("ERR no such key")
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !groupExists(cmd, key, groupName) {
 			w.WriteError("NOGROUP No such consumer group '" + groupName + "' for key name '" + key + "'")
+
 			return
 		}
 
@@ -614,30 +748,37 @@ func handleXPending(cmd *shared.Command, w *shared.Writer, db *shared.Database) 
 		// Summary form: XPENDING key group
 		if len(cmd.Args) == 2 {
 			writePendingSummary(w, pelEntries)
+
 			return
 		}
 
 		// Extended form: XPENDING key group [IDLE min-idle] start end count [consumer]
 		argIdx := 2
+
 		var minIdle int64 = -1
 
 		if string(shared.ToUpper(cmd.Args[argIdx])) == "IDLE" {
 			argIdx++
 			if argIdx >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			mi, err := strconv.ParseInt(string(cmd.Args[argIdx]), 10, 64)
 			if err != nil || mi < 0 {
 				w.WriteError("ERR Invalid min-idle-time argument for XPENDING")
+
 				return
 			}
+
 			minIdle = mi
 			argIdx++
 		}
 
 		if argIdx+2 >= len(cmd.Args) {
 			w.WriteError("ERR syntax error")
+
 			return
 		}
 
@@ -649,16 +790,21 @@ func handleXPending(cmd *shared.Command, w *shared.Writer, db *shared.Database) 
 		start, startExcl, err := shared.ParseStreamIDForRange(startStr, false)
 		if err != nil {
 			w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 			return
 		}
+
 		end, endExcl, err := shared.ParseStreamIDForRange(endStr, true)
 		if err != nil {
 			w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 			return
 		}
+
 		count, err := strconv.Atoi(countStr)
 		if err != nil || count < 0 {
 			w.WriteError("ERR value is not an integer or out of range")
+
 			return
 		}
 
@@ -671,6 +817,7 @@ func handleXPending(cmd *shared.Command, w *shared.Writer, db *shared.Database) 
 
 		// Filter entries
 		var filtered []*shared.PendingEntry
+
 		for _, pe := range pelEntries {
 			// Consumer filter
 			if consumerFilter != "" && pe.Consumer != consumerFilter {
@@ -681,13 +828,16 @@ func handleXPending(cmd *shared.Command, w *shared.Writer, db *shared.Database) 
 			if startExcl && cmpStart <= 0 {
 				continue
 			}
+
 			if !startExcl && cmpStart < 0 {
 				continue
 			}
+
 			cmpEnd := pe.ID.Compare(end)
 			if endExcl && cmpEnd >= 0 {
 				continue
 			}
+
 			if !endExcl && cmpEnd > 0 {
 				continue
 			}
@@ -698,6 +848,7 @@ func handleXPending(cmd *shared.Command, w *shared.Writer, db *shared.Database) 
 					continue
 				}
 			}
+
 			filtered = append(filtered, pe)
 			if count > 0 && len(filtered) >= count {
 				break
@@ -705,6 +856,7 @@ func handleXPending(cmd *shared.Command, w *shared.Writer, db *shared.Database) 
 		}
 
 		w.WriteArray(len(filtered))
+
 		for _, pe := range filtered {
 			w.WriteArray(4)
 			w.WriteBulkStringStr(pe.ID.String())
@@ -714,6 +866,7 @@ func handleXPending(cmd *shared.Command, w *shared.Writer, db *shared.Database) 
 			w.WriteInteger(pe.DeliveryCount)
 		}
 	}
+
 	return
 }
 
@@ -724,6 +877,7 @@ func writePendingSummary(w *shared.Writer, pelEntries []*shared.PendingEntry) {
 		w.WriteNullBulkString()
 		w.WriteNullBulkString()
 		w.WriteNullArray()
+
 		return
 	}
 
@@ -743,9 +897,11 @@ func writePendingSummary(w *shared.Writer, pelEntries []*shared.PendingEntry) {
 	for name := range consumerCounts {
 		names = append(names, name)
 	}
+
 	sort.Strings(names)
 
 	w.WriteArray(len(names))
+
 	for _, name := range names {
 		w.WriteArray(2)
 		w.WriteBulkStringStr(name)
@@ -757,106 +913,137 @@ func writePendingSummary(w *shared.Writer, pelEntries []*shared.PendingEntry) {
 func handleXReadGroup(cmd *shared.Command, w *shared.Writer, db *shared.Database, conn *shared.Connection) {
 	if conn.InScript {
 		handleXReadGroupNonBlocking(cmd, w, db)
+
 		return
 	}
 
 	if len(cmd.Args) < 6 {
 		w.WriteWrongNumArguments("xreadgroup")
+
 		return
 	}
 
 	if string(shared.ToUpper(cmd.Args[0])) != "GROUP" {
 		w.WriteError("ERR syntax error")
+
 		return
 	}
 
 	groupName := string(cmd.Args[1])
 	consumerName := string(cmd.Args[2])
 
-	var count int
-	var block float64 = -1
-	var noAck bool
-	var claimMinIdle int64 = -1
+	var (
+		count        int
+		block        float64 = -1
+		noAck        bool
+		claimMinIdle int64 = -1
+	)
+
 	i := 3
 
 	for i < len(cmd.Args) {
 		opt := shared.ToUpper(cmd.Args[i])
 		switch string(opt) {
-		case "COUNT":
+		case optionCount:
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			c, err := strconv.Atoi(string(cmd.Args[i]))
 			if err != nil || c < 0 {
 				w.WriteError("ERR value is not an integer or out of range")
+
 				return
 			}
+
 			count = c
 			i++
-		case "BLOCK":
+		case optionBlock:
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			b, err := strconv.ParseInt(string(cmd.Args[i]), 10, 64)
 			if err != nil {
 				w.WriteError("ERR timeout is not an integer or out of range")
+
 				return
 			}
+
 			if b < 0 {
 				w.WriteError("ERR timeout is negative")
+
 				return
 			}
+
 			block = float64(b) / 1000.0
 			i++
-		case "CLAIM":
+		case optionClaim:
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			minIdleStr := string(cmd.Args[i])
 			if len(minIdleStr) > 0 && minIdleStr[0] == '+' {
 				w.WriteError("ERR min-idle-time is not an integer or out of range")
+
 				return
 			}
+
 			if minIdleStr == "-0" {
 				w.WriteError("ERR min-idle-time is not an integer or out of range")
+
 				return
 			}
+
 			minIdle, err := strconv.ParseInt(minIdleStr, 10, 64)
 			if err != nil {
 				w.WriteError("ERR min-idle-time is not an integer or out of range")
+
 				return
 			}
+
 			if minIdle < 0 {
 				w.WriteError("ERR min-idle-time must be a positive integer")
+
 				return
 			}
+
 			claimMinIdle = minIdle
 			i++
 		case "NOACK":
 			noAck = true
 			i++
-		case "STREAMS":
+		case optionStreams:
 			i++
+
 			goto parseRGStreams
 		default:
 			w.WriteError("ERR syntax error")
+
 			return
 		}
 	}
 
 	w.WriteError("ERR syntax error")
+
 	return
 
 parseRGStreams:
 	remaining := cmd.Args[i:]
+
 	if len(remaining) < 2 || len(remaining)%2 != 0 {
 		w.WriteError("ERR Unbalanced 'xreadgroup' list of streams: for each stream key an ID or '>' must be specified.")
+
 		return
 	}
 
@@ -875,35 +1062,51 @@ parseRGStreams:
 			id, _, isSpecial, err := shared.ParseStreamID(idStr)
 			if err != nil {
 				w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 				return
 			}
-			if isSpecial && idStr != "0" && idStr != "0-0" {
+
+			if isSpecial && idStr != "0" && idStr != zeroStreamID {
 				w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 				return
 			}
+
 			ids[j] = id
 		}
 	}
 
 	hasNewOnly := false
+
 	for _, u := range useNewOnly {
 		if u {
 			hasNewOnly = true
+
 			break
 		}
 	}
 
 	if claimMinIdle >= 0 && hasNewOnly {
 		tryClaimStreams := func() ([]streamResultWithClaim, bool) {
-			results, noGrp, wrongT := doXReadGroupClaim(cmd, streamKeys, useNewOnly, groupName, consumerName, count, noAck, claimMinIdle)
+			results, noGrp, wrongT, err := doXReadGroupClaim(cmd, streamKeys, useNewOnly, groupName, consumerName, count, noAck, claimMinIdle)
+			if err != nil {
+				w.WriteError(err.Error())
+
+				return nil, false
+			}
+
 			if noGrp {
 				w.WriteError("NOGROUP No such key '" + streamKeys[0] + "' or consumer group '" + groupName + "' in XREADGROUP with GROUP option")
+
 				return nil, false
 			}
+
 			if wrongT {
 				w.WriteWrongType()
+
 				return nil, false
 			}
+
 			return results, true
 		}
 
@@ -913,11 +1116,15 @@ parseRGStreams:
 			if !ok {
 				return
 			}
+
 			if len(results) == 0 {
 				w.WriteNullArray()
+
 				return
 			}
+
 			writeXReadResultsWithClaim(w, results)
+
 			return
 		}
 
@@ -930,6 +1137,7 @@ parseRGStreams:
 			keyBytes = append(keyBytes, []byte(k))
 			keyBytes = append(keyBytes, []byte(groupKey(k, groupName)))
 		}
+
 		reg, _ := db.Manager().Subscriptions.RegisterWithNoKey(ctx, keyBytes...)
 		defer reg.Cancel()
 
@@ -938,15 +1146,18 @@ parseRGStreams:
 			if !ok {
 				return
 			}
+
 			if len(results) > 0 {
 				reg.Cancel()
 				writeXReadResultsWithClaim(w, results)
+
 				return
 			}
 
 			// Check if any PEL entries will become claimable soon — use a timer
 			now := time.Now().UnixMilli()
 			earliest := int64(-1)
+
 			for _, sKey := range streamKeys {
 				pelSnap, _, _ := getPELSnapshot(cmd, sKey, groupName)
 				for _, pe := range pelToEntries(pelSnap) {
@@ -962,16 +1173,21 @@ parseRGStreams:
 				select {
 				case <-ctx.Done():
 					timer.Stop()
+
 					if conn.WasUnblockedWithError() {
 						w.WriteError("UNBLOCKED client unblocked via CLIENT UNBLOCK")
+
 						return
 					}
+
 					w.WriteNullArray()
+
 					return
 				case <-timer.C:
 					continue
 				case <-reg.NotifyChan():
 					timer.Stop()
+
 					continue
 				}
 			}
@@ -979,24 +1195,37 @@ parseRGStreams:
 			if _, err := reg.Wait(); err != nil {
 				if conn.WasUnblockedWithError() {
 					w.WriteError("UNBLOCKED client unblocked via CLIENT UNBLOCK")
+
 					return
 				}
+
 				w.WriteNullArray()
+
 				return
 			}
 		}
 	}
 
 	tryReadGroupStreams := func() ([]streamResult, bool) {
-		results, noGrp, wrongT := doXReadGroup(cmd, streamKeys, useNewOnly, ids, groupName, consumerName, count, noAck)
+		results, noGrp, wrongT, err := doXReadGroup(cmd, streamKeys, useNewOnly, ids, groupName, consumerName, count, noAck)
+		if err != nil {
+			w.WriteError(err.Error())
+
+			return nil, false
+		}
+
 		if noGrp {
 			w.WriteError("NOGROUP No such consumer group '" + groupName + "' for key name '" + streamKeys[0] + "'")
+
 			return nil, false
 		}
+
 		if wrongT {
 			w.WriteWrongType()
+
 			return nil, false
 		}
+
 		return results, true
 	}
 
@@ -1006,11 +1235,15 @@ parseRGStreams:
 		if !ok {
 			return
 		}
+
 		if len(results) == 0 {
 			w.WriteNullArray()
+
 			return
 		}
+
 		writeXReadResults(w, results)
+
 		return
 	}
 
@@ -1019,7 +1252,9 @@ parseRGStreams:
 		if !ok {
 			return
 		}
+
 		writeXReadGroupHistoryResults(w, results, streamKeys)
+
 		return
 	}
 
@@ -1034,6 +1269,7 @@ parseRGStreams:
 		keyBytes = append(keyBytes, []byte(k))
 		keyBytes = append(keyBytes, []byte(groupKey(k, groupName)))
 	}
+
 	reg, _ := db.Manager().Subscriptions.RegisterWithNoKey(ctx, keyBytes...)
 	defer reg.Cancel()
 
@@ -1043,18 +1279,23 @@ parseRGStreams:
 			// Error already written (NOGROUP, WRONGTYPE)
 			return
 		}
+
 		if len(results) > 0 {
 			reg.Cancel()
 			writeXReadResults(w, results)
+
 			return
 		}
 
 		if _, err := reg.Wait(); err != nil {
 			if conn.WasUnblockedWithError() {
 				w.WriteError("UNBLOCKED client unblocked via CLIENT UNBLOCK")
+
 				return
 			}
+
 			w.WriteNullArray()
+
 			return
 		}
 	}
@@ -1064,70 +1305,88 @@ parseRGStreams:
 func handleXReadGroupNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 6 {
 		w.WriteWrongNumArguments("xreadgroup")
+
 		return
 	}
 
 	if string(shared.ToUpper(cmd.Args[0])) != "GROUP" {
 		w.WriteError("ERR syntax error")
+
 		return
 	}
 
 	groupName := string(cmd.Args[1])
 	consumerName := string(cmd.Args[2])
 
-	var count int
-	var noAck bool
+	var (
+		count int
+		noAck bool
+	)
+
 	i := 3
 
 	for i < len(cmd.Args) {
 		opt := shared.ToUpper(cmd.Args[i])
 		switch string(opt) {
-		case "COUNT":
+		case optionCount:
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			c, err := strconv.Atoi(string(cmd.Args[i]))
 			if err != nil || c < 0 {
 				w.WriteError("ERR value is not an integer or out of range")
+
 				return
 			}
+
 			count = c
 			i++
-		case "BLOCK":
+		case optionBlock:
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			i++ // skip value
-		case "CLAIM":
+		case optionClaim:
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			i++ // skip value
 		case "NOACK":
 			noAck = true
 			i++
-		case "STREAMS":
+		case optionStreams:
 			i++
+
 			goto parseNBRGStreams
 		default:
 			w.WriteError("ERR syntax error")
+
 			return
 		}
 	}
 
 	w.WriteError("ERR syntax error")
+
 	return
 
 parseNBRGStreams:
 	remaining := cmd.Args[i:]
+
 	if len(remaining) < 2 || len(remaining)%2 != 0 {
 		w.WriteError("ERR Unbalanced 'xreadgroup' list of streams: for each stream key an ID or '>' must be specified.")
+
 		return
 	}
 
@@ -1146,12 +1405,16 @@ parseNBRGStreams:
 			id, _, isSpecial, err := shared.ParseStreamID(idStr)
 			if err != nil {
 				w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 				return
 			}
-			if isSpecial && idStr != "0" && idStr != "0-0" {
+
+			if isSpecial && idStr != "0" && idStr != zeroStreamID {
 				w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 				return
 			}
+
 			ids[j] = id
 		}
 	}
@@ -1159,46 +1422,75 @@ parseNBRGStreams:
 	keys = streamKeys
 	valid = true
 	runner = func() {
-		results, noGrp, wrongT := doXReadGroup(cmd, streamKeys, useNewOnly, ids, groupName, consumerName, count, noAck)
+		results, noGrp, wrongT, err := doXReadGroup(cmd, streamKeys, useNewOnly, ids, groupName, consumerName, count, noAck)
+		if err != nil {
+			w.WriteError(err.Error())
+
+			return
+		}
+
 		if noGrp {
 			w.WriteError("NOGROUP No such consumer group '" + groupName + "' for key name '" + streamKeys[0] + "'")
+
 			return
 		}
+
 		if wrongT {
 			w.WriteWrongType()
+
 			return
 		}
+
 		if len(results) == 0 {
 			w.WriteNullArray()
+
 			return
 		}
+
 		writeXReadResults(w, results)
 	}
+
 	return
 }
 
 // doXReadGroup performs the actual XREADGROUP logic.
-func doXReadGroup(cmd *shared.Command, streamKeys []string, useNewOnly []bool, ids []shared.StreamID, groupName, consumerName string, count int, noAck bool) (results []streamResult, noGroup bool, wrongTypeKey bool) {
+func doXReadGroup(cmd *shared.Command, streamKeys []string, useNewOnly []bool, ids []shared.StreamID, groupName, consumerName string, count int, noAck bool) (results []streamResult, noGroup bool, wrongTypeKey bool, readErr error) {
+	// Roll back this read's deliveries without losing earlier EXEC commands.
+	savepoint := cmd.Context.TakeSavepoint()
+
+	defer func() {
+		if readErr != nil || noGroup || wrongTypeKey {
+			cmd.Context.RestoreSavepoint(savepoint)
+		}
+	}()
 
 	for j, sKey := range streamKeys {
 		snap, _, exists, wrongType, err := getStreamSnapshot(cmd, sKey)
 		if err != nil {
-			continue
+			return nil, false, false, err
 		}
+
 		if wrongType {
 			wrongTypeKey = true
+
 			return
 		}
 
-		if !exists || !groupExists(cmd, sKey, groupName) {
+		gSnap, _, err := getGroupSnapshot(cmd, sKey, groupName)
+		if err != nil {
+			return nil, false, false, err
+		}
+
+		_, hasGroup := gSnap.GetNetAdds()["__group__"]
+		if !exists || !hasGroup {
 			noGroup = true
+
 			return
 		}
 
 		if useNewOnly[j] {
 			// New entries mode (>)
-			gSnap, _, _ := getGroupSnapshot(cmd, sKey, groupName)
-			lastDelivered, entriesRead, createdAt, _ := getGroupMeta(gSnap)
+			lastDelivered, entriesRead, createdAt := getGroupMeta(gSnap)
 
 			entries := snapshotToEntries(snap)
 			filtered := rangeEntries(entries, lastDelivered, shared.MaxStreamID, true, false, count)
@@ -1208,6 +1500,7 @@ func doXReadGroup(cmd *shared.Command, streamKeys []string, useNewOnly []bool, i
 
 				// Update last delivered ID
 				newLastDelivered := filtered[len(filtered)-1].ID
+
 				newEntriesRead := entriesRead
 				if newEntriesRead >= 0 {
 					newEntriesRead += int64(len(filtered))
@@ -1215,18 +1508,25 @@ func doXReadGroup(cmd *shared.Command, streamKeys []string, useNewOnly []bool, i
 					// First delivery: initialize entries-read from the count of entries delivered
 					newEntriesRead = int64(len(filtered))
 				}
+
 				metaRaw := encodeGroupMeta(newLastDelivered, newEntriesRead, createdAt)
-				emitGroupInsert(cmd, sKey, groupName, metaRaw)
+				if err := emitGroupInsert(cmd, sKey, groupName, metaRaw); err != nil {
+					return nil, false, false, err
+				}
 
 				// Ensure consumer exists
 				consumerMeta := encodeConsumerMeta(now, now)
-				emitConsumerInsert(cmd, sKey, groupName, consumerName, consumerMeta)
+				if err := emitConsumerInsert(cmd, sKey, groupName, consumerName, consumerMeta); err != nil {
+					return nil, false, false, err
+				}
 
 				// Add to PEL unless NOACK
 				if !noAck {
 					for _, entry := range filtered {
 						pelRaw := encodePELEntry(consumerName, now, 1)
-						emitPELInsert(cmd, sKey, groupName, entry.ID, pelRaw)
+						if err := emitPELInsert(cmd, sKey, groupName, entry.ID, pelRaw); err != nil {
+							return nil, false, false, err
+						}
 					}
 				}
 
@@ -1234,7 +1534,11 @@ func doXReadGroup(cmd *shared.Command, streamKeys []string, useNewOnly []bool, i
 			}
 		} else {
 			// History mode (specific ID) — read from PEL
-			pelSnap, _, _ := getPELSnapshot(cmd, sKey, groupName)
+			pelSnap, _, err := getPELSnapshot(cmd, sKey, groupName)
+			if err != nil {
+				return nil, false, false, err
+			}
+
 			if pelSnap == nil || pelSnap.NetAdds == nil {
 				continue
 			}
@@ -1243,27 +1547,33 @@ func doXReadGroup(cmd *shared.Command, streamKeys []string, useNewOnly []bool, i
 			entries := snapshotToEntries(snap)
 
 			var pendingEntries []*shared.StreamEntry
+
 			pelEntries := pelToEntries(pelSnap)
 			for _, pe := range pelEntries {
 				if pe.Consumer != consumerName {
 					continue
 				}
+
 				if pe.ID.Compare(startID) <= 0 {
 					continue
 				}
 				// Find the entry in the stream; if deleted, return ID with empty fields
 				found := false
+
 				for _, entry := range entries {
 					if entry.ID.Compare(pe.ID) == 0 {
 						pendingEntries = append(pendingEntries, entry)
 						found = true
+
 						break
 					}
 				}
+
 				if !found {
 					// Entry was deleted — return placeholder with empty fields
 					pendingEntries = append(pendingEntries, &shared.StreamEntry{ID: pe.ID, Fields: nil})
 				}
+
 				if count > 0 && len(pendingEntries) >= count {
 					break
 				}
@@ -1272,13 +1582,16 @@ func doXReadGroup(cmd *shared.Command, streamKeys []string, useNewOnly []bool, i
 			// Update consumer seen time
 			now := time.Now().UnixMilli()
 			consumerMeta := encodeConsumerMeta(now, 0)
-			gSnap, _, _ := getGroupSnapshot(cmd, sKey, groupName)
+
 			consumers := getConsumersFromGroup(gSnap)
 			if elem, ok := consumers[consumerName]; ok {
-				_, activeTime := decodeConsumerMeta(elem.Data.Decompress())
+				_, activeTime := decodeConsumerMeta(elem.GetData().Decompress())
 				consumerMeta = encodeConsumerMeta(now, activeTime)
 			}
-			emitConsumerInsert(cmd, sKey, groupName, consumerName, consumerMeta)
+
+			if err := emitConsumerInsert(cmd, sKey, groupName, consumerName, consumerMeta); err != nil {
+				return nil, false, false, err
+			}
 
 			if len(pendingEntries) > 0 {
 				results = append(results, streamResult{key: sKey, entries: pendingEntries})
@@ -1286,31 +1599,51 @@ func doXReadGroup(cmd *shared.Command, streamKeys []string, useNewOnly []bool, i
 		}
 	}
 
-	return results, false, false
+	return results, false, false, nil
 }
 
 // doXReadGroupClaim performs XREADGROUP with the CLAIM option.
 // It claims pending entries idle >= claimMinIdle, then reads new entries from ">".
 // Returns results in claimEntry format with idle_time and delivery_count metadata.
-func doXReadGroupClaim(cmd *shared.Command, streamKeys []string, useNewOnly []bool, groupName, consumerName string, count int, noAck bool, claimMinIdle int64) (results []streamResultWithClaim, noGroup bool, wrongTypeKey bool) {
+func doXReadGroupClaim(cmd *shared.Command, streamKeys []string, useNewOnly []bool, groupName, consumerName string, count int, noAck bool, claimMinIdle int64) (results []streamResultWithClaim, noGroup bool, wrongTypeKey bool, readErr error) {
+	// Roll back this read's deliveries without losing earlier EXEC commands.
+	savepoint := cmd.Context.TakeSavepoint()
+
+	defer func() {
+		if readErr != nil || noGroup || wrongTypeKey {
+			cmd.Context.RestoreSavepoint(savepoint)
+		}
+	}()
+
 	for j, sKey := range streamKeys {
 		snap, _, exists, wrongType, err := getStreamSnapshot(cmd, sKey)
 		if err != nil {
-			continue
+			return nil, false, false, err
 		}
+
 		if wrongType {
 			wrongTypeKey = true
+
 			return
 		}
 
-		if !exists || !groupExists(cmd, sKey, groupName) {
+		gSnap, _, err := getGroupSnapshot(cmd, sKey, groupName)
+		if err != nil {
+			return nil, false, false, err
+		}
+
+		_, hasGroup := gSnap.GetNetAdds()["__group__"]
+		if !exists || !hasGroup {
 			noGroup = true
+
 			return
 		}
 
 		now := time.Now().UnixMilli()
 		entries := snapshotToEntries(snap)
+
 		var claimEntries []claimEntry
+
 		remaining := count
 		if remaining <= 0 {
 			remaining = 100
@@ -1318,32 +1651,42 @@ func doXReadGroupClaim(cmd *shared.Command, streamKeys []string, useNewOnly []bo
 
 		// Step 1: Claim pending entries idle >= claimMinIdle
 		if useNewOnly[j] {
-			pelSnap, _, _ := getPELSnapshot(cmd, sKey, groupName)
+			pelSnap, _, err := getPELSnapshot(cmd, sKey, groupName)
+			if err != nil {
+				return nil, false, false, err
+			}
+
 			pelEntries := pelToEntries(pelSnap)
 
 			for _, pe := range pelEntries {
 				if remaining <= 0 {
 					break
 				}
+
 				idle := now - pe.DeliveryTime
 				if idle < claimMinIdle {
 					continue
 				}
 				// Find entry in stream
 				var entry *shared.StreamEntry
+
 				for _, e := range entries {
 					if e.ID.Compare(pe.ID) == 0 {
 						entry = e
+
 						break
 					}
 				}
+
 				if entry == nil {
 					continue // deleted entry, skip
 				}
 
 				// Claim: transfer ownership, increment delivery count in PEL
 				pelRaw := encodePELEntry(consumerName, now, pe.DeliveryCount+1)
-				emitPELInsert(cmd, sKey, groupName, pe.ID, pelRaw)
+				if err := emitPELInsert(cmd, sKey, groupName, pe.ID, pelRaw); err != nil {
+					return nil, false, false, err
+				}
 
 				claimEntries = append(claimEntries, claimEntry{
 					entry:         entry,
@@ -1355,28 +1698,33 @@ func doXReadGroupClaim(cmd *shared.Command, streamKeys []string, useNewOnly []bo
 
 			// Step 2: Read new entries from ">"
 			if remaining > 0 {
-				gSnap, _, _ := getGroupSnapshot(cmd, sKey, groupName)
-				lastDelivered, entriesRead, createdAt, _ := getGroupMeta(gSnap)
+				lastDelivered, entriesRead, createdAt := getGroupMeta(gSnap)
 
 				filtered := rangeEntries(entries, lastDelivered, shared.MaxStreamID, true, false, remaining)
 
 				if len(filtered) > 0 {
 					// Update last delivered ID
 					newLastDelivered := filtered[len(filtered)-1].ID
+
 					newEntriesRead := entriesRead
 					if newEntriesRead >= 0 {
 						newEntriesRead += int64(len(filtered))
 					} else {
 						newEntriesRead = int64(len(filtered))
 					}
+
 					metaRaw := encodeGroupMeta(newLastDelivered, newEntriesRead, createdAt)
-					emitGroupInsert(cmd, sKey, groupName, metaRaw)
+					if err := emitGroupInsert(cmd, sKey, groupName, metaRaw); err != nil {
+						return nil, false, false, err
+					}
 
 					// Add to PEL unless NOACK
 					if !noAck {
 						for _, entry := range filtered {
 							pelRaw := encodePELEntry(consumerName, now, 1)
-							emitPELInsert(cmd, sKey, groupName, entry.ID, pelRaw)
+							if err := emitPELInsert(cmd, sKey, groupName, entry.ID, pelRaw); err != nil {
+								return nil, false, false, err
+							}
 						}
 					}
 
@@ -1394,7 +1742,9 @@ func doXReadGroupClaim(cmd *shared.Command, streamKeys []string, useNewOnly []bo
 		// Ensure consumer exists
 		if len(claimEntries) > 0 {
 			consumerMeta := encodeConsumerMeta(now, now)
-			emitConsumerInsert(cmd, sKey, groupName, consumerName, consumerMeta)
+			if err := emitConsumerInsert(cmd, sKey, groupName, consumerName, consumerMeta); err != nil {
+				return nil, false, false, err
+			}
 		}
 
 		if len(claimEntries) > 0 {
@@ -1402,13 +1752,14 @@ func doXReadGroupClaim(cmd *shared.Command, streamKeys []string, useNewOnly []bo
 		}
 	}
 
-	return results, false, false
+	return results, false, false, nil
 }
 
 // handleXAckDel handles XACKDEL key group [KEEPREF|DELREF|ACKED] IDS numids id [id ...]
 func handleXAckDel(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 5 {
 		w.WriteWrongNumArguments("xackdel")
+
 		return
 	}
 
@@ -1418,42 +1769,49 @@ func handleXAckDel(cmd *shared.Command, w *shared.Writer, db *shared.Database) (
 	i := 2
 
 	refMode := shared.RefModeKeepRef
+
 	if i < len(cmd.Args) {
 		opt := string(shared.ToUpper(cmd.Args[i]))
 		switch opt {
-		case "KEEPREF":
+		case optionKeepRef:
 			refMode = shared.RefModeKeepRef
 			i++
-		case "DELREF":
+		case optionDelRef:
 			refMode = shared.RefModeDelRef
 			i++
-		case "ACKED":
+		case optionAcked:
 			refMode = shared.RefModeAcked
 			i++
-		case "IDS":
+		case optionIDs:
 			// fall through
 		default:
 			w.WriteError("ERR syntax error")
+
 			return
 		}
 	}
 
-	if i >= len(cmd.Args) || string(shared.ToUpper(cmd.Args[i])) != "IDS" {
+	if i >= len(cmd.Args) || string(shared.ToUpper(cmd.Args[i])) != optionIDs {
 		w.WriteError("ERR syntax error")
+
 		return
 	}
+
 	i++
 
 	if i >= len(cmd.Args) {
 		w.WriteError("ERR syntax error")
+
 		return
 	}
 
 	numIds, err := strconv.Atoi(string(cmd.Args[i]))
 	if err != nil || numIds < 1 {
 		w.WriteError("ERR Number of IDs must be a positive integer")
+
 		return
 	}
+
 	i++
 
 	if i+numIds != len(cmd.Args) {
@@ -1462,6 +1820,7 @@ func handleXAckDel(cmd *shared.Command, w *shared.Writer, db *shared.Database) (
 		} else {
 			w.WriteError("ERR syntax error")
 		}
+
 		return
 	}
 
@@ -1470,59 +1829,97 @@ func handleXAckDel(cmd *shared.Command, w *shared.Writer, db *shared.Database) (
 		id, _, isSpecial, err := shared.ParseStreamID(string(cmd.Args[i+j]))
 		if err != nil || isSpecial {
 			w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 			return
 		}
+
 		ids[j] = id
 	}
 
 	valid = true
 	runner = func() {
+		savepoint := cmd.Context.TakeSavepoint()
+
+		succeeded := false
+		defer func() {
+			if !succeeded {
+				cmd.Context.RestoreSavepoint(savepoint)
+			}
+		}()
+
 		_, _, exists, wrongType, err := getStreamSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
 			w.WriteArray(numIds)
+
 			for range numIds {
 				w.WriteInteger(-1)
 			}
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !groupExists(cmd, key, groupName) {
 			w.WriteArray(numIds)
+
 			for range numIds {
 				w.WriteInteger(-1)
 			}
+
 			return
 		}
 
-		pelSnap, _, _ := getPELSnapshot(cmd, key, groupName)
+		pelSnap, _, err := getPELSnapshot(cmd, key, groupName)
+		if err != nil {
+			w.WriteError(err.Error())
+
+			return
+		}
 
 		results := make([]int64, numIds)
+
 		for j, id := range ids {
-			elemID := string(encodeStreamElementID(id))
+			elemID := encodeStreamElementID(id)
+
 			if pelSnap == nil || pelSnap.NetAdds == nil {
 				results[j] = -1
+
 				continue
 			}
-			if _, ok := pelSnap.NetAdds[elemID]; !ok {
+
+			if _, ok := pelSnap.GetNetAdds()[string(elemID)]; !ok {
 				results[j] = -1
+
 				continue
 			}
 
 			// Remove from this group's PEL
-			emitPELRemove(cmd, key, groupName, id)
+			if err := emitPELRemove(cmd, key, groupName, id); err != nil {
+				w.WriteError(err.Error())
+
+				return
+			}
 
 			switch refMode {
 			case shared.RefModeKeepRef:
 				// Ack + delete stream entry, but don't touch other groups' PELs
-				emitStreamRemove(cmd, key, id)
+				if err := emitStreamRemove(cmd, key, id); err != nil {
+					w.WriteError(err.Error())
+
+					return
+				}
+
 				results[j] = 1
 
 			case shared.RefModeDelRef:
@@ -1531,28 +1928,54 @@ func handleXAckDel(cmd *shared.Command, w *shared.Writer, db *shared.Database) (
 					if g == groupName {
 						continue
 					}
-					emitPELRemove(cmd, key, g, id)
+
+					if err := emitPELRemove(cmd, key, g, id); err != nil {
+						w.WriteError(err.Error())
+
+						return
+					}
 				}
-				emitStreamRemove(cmd, key, id)
+
+				if err := emitStreamRemove(cmd, key, id); err != nil {
+					w.WriteError(err.Error())
+
+					return
+				}
+
 				results[j] = 1
 
 			case shared.RefModeAcked:
 				// Ack; only delete stream entry if no other group still has it pending
 				allAcked := true
+
 				for _, g := range listGroupNames(cmd, key) {
 					if g == groupName {
 						continue
 					}
-					otherPEL, _, _ := getPELSnapshot(cmd, key, g)
+
+					otherPEL, _, err := getPELSnapshot(cmd, key, g)
+					if err != nil {
+						w.WriteError(err.Error())
+
+						return
+					}
+
 					if otherPEL != nil && otherPEL.NetAdds != nil {
-						if _, ok := otherPEL.NetAdds[elemID]; ok {
+						if _, ok := otherPEL.GetNetAdds()[string(elemID)]; ok {
 							allAcked = false
+
 							break
 						}
 					}
 				}
+
 				if allAcked {
-					emitStreamRemove(cmd, key, id)
+					if err := emitStreamRemove(cmd, key, id); err != nil {
+						w.WriteError(err.Error())
+
+						return
+					}
+
 					results[j] = 1
 				} else {
 					results[j] = 2
@@ -1560,11 +1983,15 @@ func handleXAckDel(cmd *shared.Command, w *shared.Writer, db *shared.Database) (
 			}
 		}
 
+		succeeded = true
+
 		w.WriteArray(numIds)
+
 		for _, r := range results {
 			w.WriteInteger(r)
 		}
 	}
+
 	return
 }
 
@@ -1572,6 +1999,7 @@ func handleXAckDel(cmd *shared.Command, w *shared.Writer, db *shared.Database) (
 func handleXClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 5 {
 		w.WriteWrongNumArguments("xclaim")
+
 		return
 	}
 
@@ -1581,18 +2009,22 @@ func handleXClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 	keys = []string{key}
 
 	minIdleStr := string(cmd.Args[3])
+
 	minIdleTime, err := strconv.ParseInt(minIdleStr, 10, 64)
 	if err != nil || minIdleTime < 0 {
 		w.WriteError("ERR Invalid min-idle-time argument for XCLAIM")
+
 		return
 	}
 
 	// Parse IDs and options
-	var claimIDs []shared.StreamID
-	var force, justID bool
-	var idleMs int64 = -1
-	var timeMs int64 = -1
-	var retryCount int64 = -1
+	var (
+		claimIDs      []shared.StreamID
+		force, justID bool
+		idleMs        int64 = -1
+		timeMs        int64 = -1
+		retryCount    int64 = -1
+	)
 
 	for i := 4; i < len(cmd.Args); i++ {
 		arg := string(shared.ToUpper(cmd.Args[i]))
@@ -1601,37 +2033,49 @@ func handleXClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			v, err := strconv.ParseInt(string(cmd.Args[i]), 10, 64)
 			if err != nil {
 				w.WriteError("ERR value is not an integer or out of range")
+
 				return
 			}
+
 			idleMs = v
 		case "TIME":
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			v, err := strconv.ParseInt(string(cmd.Args[i]), 10, 64)
 			if err != nil {
 				w.WriteError("ERR value is not an integer or out of range")
+
 				return
 			}
+
 			timeMs = v
 		case "RETRYCOUNT":
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			v, err := strconv.ParseInt(string(cmd.Args[i]), 10, 64)
 			if err != nil {
 				w.WriteError("ERR value is not an integer or out of range")
+
 				return
 			}
+
 			retryCount = v
 		case "FORCE":
 			force = true
@@ -1641,6 +2085,7 @@ func handleXClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
 			// Parse but ignore LASTID for now
@@ -1649,52 +2094,73 @@ func handleXClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 			id, _, isSpecial, err := shared.ParseStreamID(string(cmd.Args[i]))
 			if err != nil || isSpecial {
 				w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 				return
 			}
+
 			claimIDs = append(claimIDs, id)
 		}
 	}
 
 	valid = true
 	runner = func() {
+		savepoint := cmd.Context.TakeSavepoint()
+
+		succeeded := false
+		defer func() {
+			if !succeeded {
+				cmd.Context.RestoreSavepoint(savepoint)
+			}
+		}()
+
 		cmd.Context.BeginTx()
 
 		snap, _, exists, wrongType, err := getStreamSnapshot(cmd, key)
 		if err != nil {
-			cmd.Context.Abort()
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
-			cmd.Context.Abort()
 			w.WriteArray(0)
+
 			return
 		}
+
 		if wrongType {
-			cmd.Context.Abort()
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !groupExists(cmd, key, groupName) {
-			cmd.Context.Abort()
 			w.WriteError("NOGROUP No such consumer group '" + groupName + "' for key name '" + key + "'")
+
 			return
 		}
 
-		pelSnap, _, _ := getPELSnapshot(cmd, key, groupName)
+		pelSnap, _, err := getPELSnapshot(cmd, key, groupName)
+		if err != nil {
+			w.WriteError(err.Error())
+
+			return
+		}
+
 		entries := snapshotToEntries(snap)
 		now := time.Now().UnixMilli()
 
 		var claimed []*shared.StreamEntry
+
 		for _, id := range claimIDs {
-			elemID := string(encodeStreamElementID(id))
+			elemID := encodeStreamElementID(id)
 
 			// Check if entry exists in PEL
 			var pe *shared.PendingEntry
+
 			if pelSnap != nil && pelSnap.NetAdds != nil {
-				if elem, ok := pelSnap.NetAdds[elemID]; ok {
-					consumer, deliveryTime, deliveryCount := decodePELEntry(elem.Data.Decompress())
+				if elem, ok := pelSnap.GetNetAdds()[string(elemID)]; ok {
+					consumer, deliveryTime, deliveryCount := decodePELEntry(elem.GetData().Decompress())
 					pe = &shared.PendingEntry{
 						ID:            id,
 						Consumer:      consumer,
@@ -1718,9 +2184,11 @@ func handleXClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 
 			// Find entry in stream
 			var entry *shared.StreamEntry
+
 			for _, e := range entries {
 				if e.ID.Compare(id) == 0 {
 					entry = e
+
 					break
 				}
 			}
@@ -1731,10 +2199,13 @@ func handleXClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 			if idleMs >= 0 {
 				deliveryTime = now - idleMs
 			}
+
 			if timeMs >= 0 {
 				deliveryTime = timeMs
 			}
+
 			var delCount int64 = 1
+
 			if pe != nil {
 				if justID {
 					delCount = pe.DeliveryCount // JUSTID: don't increment
@@ -1742,12 +2213,17 @@ func handleXClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 					delCount = pe.DeliveryCount + 1
 				}
 			}
+
 			if retryCount >= 0 {
 				delCount = retryCount
 			}
 
 			pelRaw := encodePELEntry(consumerName, deliveryTime, delCount)
-			emitPELInsert(cmd, key, groupName, id, pelRaw)
+			if err := emitPELInsert(cmd, key, groupName, id, pelRaw); err != nil {
+				w.WriteError(err.Error())
+
+				return
+			}
 
 			// Only include existing entries in the response
 			if entry != nil {
@@ -1757,10 +2233,17 @@ func handleXClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 
 		// Ensure consumer exists
 		consumerMeta := encodeConsumerMeta(now, now)
-		emitConsumerInsert(cmd, key, groupName, consumerName, consumerMeta)
+		if err := emitConsumerInsert(cmd, key, groupName, consumerName, consumerMeta); err != nil {
+			w.WriteError(err.Error())
+
+			return
+		}
+
+		succeeded = true
 
 		if justID {
 			w.WriteArray(len(claimed))
+
 			for _, e := range claimed {
 				w.WriteBulkStringStr(e.ID.String())
 			}
@@ -1768,6 +2251,7 @@ func handleXClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 			writeStreamEntries(w, claimed)
 		}
 	}
+
 	return
 }
 
@@ -1775,6 +2259,7 @@ func handleXClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 func handleXAutoClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 5 {
 		w.WriteWrongNumArguments("xautoclaim")
+
 		return
 	}
 
@@ -1786,12 +2271,14 @@ func handleXAutoClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database
 	minIdleTime, err := strconv.ParseInt(string(cmd.Args[3]), 10, 64)
 	if err != nil || minIdleTime < 0 {
 		w.WriteError("ERR Invalid min-idle-time argument for XAUTOCLAIM")
+
 		return
 	}
 
 	startID, _, _, err := shared.ParseStreamID(string(cmd.Args[4]))
 	if err != nil {
 		w.WriteError("ERR Invalid stream ID specified as stream command argument")
+
 		return
 	}
 
@@ -1801,63 +2288,88 @@ func handleXAutoClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database
 	for i := 5; i < len(cmd.Args); i++ {
 		opt := string(shared.ToUpper(cmd.Args[i]))
 		switch opt {
-		case "COUNT":
+		case optionCount:
 			i++
 			if i >= len(cmd.Args) {
 				w.WriteError("ERR syntax error")
+
 				return
 			}
+
 			c, err := strconv.ParseInt(string(cmd.Args[i]), 10, 32)
 			if err != nil || c < 1 {
 				w.WriteError("ERR COUNT must be > 0")
+
 				return
 			}
+
 			count = int(c)
 		case "JUSTID":
 			justID = true
 		default:
 			w.WriteError("ERR syntax error")
+
 			return
 		}
 	}
 
 	valid = true
 	runner = func() {
+		savepoint := cmd.Context.TakeSavepoint()
+
+		succeeded := false
+		defer func() {
+			if !succeeded {
+				cmd.Context.RestoreSavepoint(savepoint)
+			}
+		}()
+
 		cmd.Context.BeginTx()
 
 		snap, _, exists, wrongType, err := getStreamSnapshot(cmd, key)
 		if err != nil {
-			cmd.Context.Abort()
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
-			cmd.Context.Abort()
 			w.WriteArray(3)
-			w.WriteBulkStringStr("0-0")
+			w.WriteBulkStringStr(zeroStreamID)
 			w.WriteArray(0)
 			w.WriteArray(0)
+
 			return
 		}
+
 		if wrongType {
-			cmd.Context.Abort()
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !groupExists(cmd, key, groupName) {
-			cmd.Context.Abort()
 			w.WriteError("NOGROUP No such consumer group '" + groupName + "' for key name '" + key + "'")
+
 			return
 		}
 
-		pelSnap, _, _ := getPELSnapshot(cmd, key, groupName)
+		pelSnap, _, err := getPELSnapshot(cmd, key, groupName)
+		if err != nil {
+			w.WriteError(err.Error())
+
+			return
+		}
+
 		pelEntries := pelToEntries(pelSnap)
 		entries := snapshotToEntries(snap)
 		now := time.Now().UnixMilli()
 
-		var claimed []*shared.StreamEntry
-		var deletedIDs []shared.StreamID
+		var (
+			claimed    []*shared.StreamEntry
+			deletedIDs []shared.StreamID
+		)
+
 		cursor := shared.StreamID{Ms: 0, Seq: 0}
 		claimed_count := 0
 
@@ -1865,50 +2377,72 @@ func handleXAutoClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database
 			if pe.ID.Compare(startID) < 0 {
 				continue
 			}
+
 			if claimed_count >= count {
 				cursor = pe.ID
+
 				break
 			}
 
 			idle := now - pe.DeliveryTime
 			if idle < minIdleTime {
 				claimed_count++
+
 				continue
 			}
 
 			// Find entry
 			var entry *shared.StreamEntry
+
 			for _, e := range entries {
 				if e.ID.Compare(pe.ID) == 0 {
 					entry = e
+
 					break
 				}
 			}
 
 			if entry == nil {
 				deletedIDs = append(deletedIDs, pe.ID)
-				emitPELRemove(cmd, key, groupName, pe.ID)
+				if err := emitPELRemove(cmd, key, groupName, pe.ID); err != nil {
+					w.WriteError(err.Error())
+
+					return
+				}
+
 				claimed_count++
+
 				continue
 			}
 
 			// Claim
 			pelRaw := encodePELEntry(consumerName, now, pe.DeliveryCount+1)
-			emitPELInsert(cmd, key, groupName, pe.ID, pelRaw)
+			if err := emitPELInsert(cmd, key, groupName, pe.ID, pelRaw); err != nil {
+				w.WriteError(err.Error())
+
+				return
+			}
+
 			claimed = append(claimed, entry)
 			claimed_count++
 		}
 
 		// Ensure consumer exists
 		consumerMeta := encodeConsumerMeta(now, now)
-		emitConsumerInsert(cmd, key, groupName, consumerName, consumerMeta)
+		if err := emitConsumerInsert(cmd, key, groupName, consumerName, consumerMeta); err != nil {
+			w.WriteError(err.Error())
 
+			return
+		}
+
+		succeeded = true
 		// Write response: [cursor, entries, deleted_ids]
 		w.WriteArray(3)
 		w.WriteBulkStringStr(cursor.String())
 
 		if justID {
 			w.WriteArray(len(claimed))
+
 			for _, e := range claimed {
 				w.WriteBulkStringStr(e.ID.String())
 			}
@@ -1917,9 +2451,11 @@ func handleXAutoClaim(cmd *shared.Command, w *shared.Writer, db *shared.Database
 		}
 
 		w.WriteArray(len(deletedIDs))
+
 		for _, id := range deletedIDs {
 			w.WriteBulkStringStr(id.String())
 		}
 	}
+
 	return
 }

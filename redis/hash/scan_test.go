@@ -30,7 +30,7 @@ import (
 func TestHandleHScan(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	seedHash(eng, ctx, "myhash", map[string]string{"f1": "v1", "f2": "v2", "f3": "v3"})
+	seedHash(ctx, map[string]string{"f1": "v1", "f2": "v2", "f3": "v3"})
 
 	cmd := &shared.Command{Args: [][]byte{[]byte("myhash"), []byte("0")}}
 	resp := runHandlerWith(eng, ctx, handleHScan, cmd)
@@ -51,13 +51,15 @@ func TestHandleHScan_NonExistent(t *testing.T) {
 func TestHandleHScan_WithMatch(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	seedHash(eng, ctx, "myhash", map[string]string{"name": "alice", "age": "30", "nickname": "ali"})
+	seedHash(ctx, map[string]string{"name": "alice", "age": "30", "nickname": "ali"})
 
 	cmd := &shared.Command{Args: [][]byte{[]byte("myhash"), []byte("0"), []byte("MATCH"), []byte("n*")}}
+
 	resp := runHandlerWith(eng, ctx, handleHScan, cmd)
 	if !strings.Contains(resp, "name") || !strings.Contains(resp, "nickname") {
 		t.Fatalf("expected name and nickname in results, got %q", resp)
 	}
+
 	if strings.Contains(resp, "age") {
 		t.Fatalf("expected age to be filtered out, got %q", resp)
 	}
@@ -66,10 +68,11 @@ func TestHandleHScan_WithMatch(t *testing.T) {
 func TestHandleHRandField(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	seedHash(eng, ctx, "myhash", map[string]string{"f1": "v1", "f2": "v2", "f3": "v3"})
+	seedHash(ctx, map[string]string{"f1": "v1", "f2": "v2", "f3": "v3"})
 
 	// Single random field
 	cmd := &shared.Command{Args: [][]byte{[]byte("myhash")}}
+
 	resp := runHandlerWith(eng, ctx, handleHRandField, cmd)
 	if !strings.Contains(resp, "f1") && !strings.Contains(resp, "f2") && !strings.Contains(resp, "f3") {
 		t.Fatalf("expected one of f1/f2/f3, got %q", resp)
@@ -86,10 +89,11 @@ func TestHandleHRandField_NonExistent(t *testing.T) {
 func TestHandleHRandField_WithCount(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	seedHash(eng, ctx, "myhash", map[string]string{"f1": "v1", "f2": "v2", "f3": "v3"})
+	seedHash(ctx, map[string]string{"f1": "v1", "f2": "v2", "f3": "v3"})
 
 	// Positive count - distinct fields
 	cmd := &shared.Command{Args: [][]byte{[]byte("myhash"), []byte("2")}}
+
 	resp := runHandlerWith(eng, ctx, handleHRandField, cmd)
 	if !strings.Contains(resp, "*2") {
 		t.Fatalf("expected array of 2, got %q", resp)
@@ -99,10 +103,11 @@ func TestHandleHRandField_WithCount(t *testing.T) {
 func TestHandleHRandField_NegativeCount(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	seedHash(eng, ctx, "myhash", map[string]string{"f1": "v1"})
+	seedHash(ctx, map[string]string{"f1": "v1"})
 
 	// Negative count - allows repeats
 	cmd := &shared.Command{Args: [][]byte{[]byte("myhash"), []byte("-3")}}
+
 	resp := runHandlerWith(eng, ctx, handleHRandField, cmd)
 	if !strings.Contains(resp, "*3") {
 		t.Fatalf("expected array of 3, got %q", resp)

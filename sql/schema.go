@@ -35,6 +35,14 @@ import (
 	"github.com/swytchdb/engine/effects"
 )
 
+const (
+	defaultKindNull  = "null"
+	defaultKindInt   = "int"
+	defaultKindFloat = "float"
+	defaultKindText  = "text"
+	defaultKindBlob  = "blob"
+)
+
 // columnSchema describes a single column in a swytch-backed table.
 //
 // Default, when non-nil, is applied at read time: if a row has no
@@ -139,6 +147,7 @@ func deriveID(hlc time.Time, nodeID pb.NodeID, name string) []byte {
 	h := xxh3.Hash128(payload).Bytes()
 	out := make([]byte, 16)
 	copy(out, h[:])
+
 	return out
 }
 
@@ -151,39 +160,8 @@ func deriveID(hlc time.Time, nodeID pb.NodeID, name string) []byte {
 func nextSyntheticRowID(hlc time.Time, nodeID pb.NodeID, seq uint64) int64 {
 	name := "row:" + strconv.FormatUint(seq, 10)
 	digest := deriveID(hlc, nodeID, name)
+
 	return int64(binary.BigEndian.Uint64(digest[:8]) & 0x7fff_ffff_ffff_ffff)
-}
-
-// columnAffinity returns the affinity of the indexed column within
-// the given table schema, or "" if the column name isn't found.
-func (s *indexSchema) columnAffinity(tbl *tableSchema) string {
-	if len(s.Columns) == 0 {
-		return ""
-	}
-	name := s.Columns[0]
-	for _, c := range tbl.Columns {
-		if c.Name == name {
-			return c.Affinity
-		}
-	}
-	return ""
-}
-
-// columnIndex returns the index into tbl.Columns for the indexed
-// column's leading entry, or -1 if not found. Kept for callers that
-// only care about the first column (typically the planner's
-// leftmost-column matcher).
-func (s *indexSchema) columnIndex(tbl *tableSchema) int {
-	if len(s.Columns) == 0 {
-		return -1
-	}
-	name := s.Columns[0]
-	for i, c := range tbl.Columns {
-		if c.Name == name {
-			return i
-		}
-	}
-	return -1
 }
 
 // columnIndexes resolves every indexed column to its ordinal in
@@ -195,13 +173,16 @@ func (s *indexSchema) columnIndexes(tbl *tableSchema) []int {
 	out := make([]int, len(s.Columns))
 	for i, name := range s.Columns {
 		out[i] = -1
+
 		for j, c := range tbl.Columns {
 			if c.Name == name {
 				out[i] = j
+
 				break
 			}
 		}
 	}
+
 	return out
 }
 
@@ -213,16 +194,13 @@ func (s *indexSchema) columnAffinities(tbl *tableSchema) []string {
 		for _, c := range tbl.Columns {
 			if c.Name == name {
 				out[i] = c.Affinity
+
 				break
 			}
 		}
 	}
-	return out
-}
 
-// isComposite reports whether the PK has more than one column.
-func (t *tableSchema) isComposite() bool {
-	return len(t.PKColumns) > 1
+	return out
 }
 
 // hasPK reports whether the table has any form of primary-key identity
@@ -237,10 +215,12 @@ func (t *tableSchema) pkAffinities() []string {
 	if t.SyntheticPK {
 		return []string{affinityInteger}
 	}
+
 	out := make([]string, len(t.PKColumns))
 	for i, ord := range t.PKColumns {
 		out[i] = t.Columns[ord].Affinity
 	}
+
 	return out
 }
 
@@ -251,29 +231,8 @@ func (t *tableSchema) pkValues(cols []sqlite.Value) []sqlite.Value {
 	for i, ord := range t.PKColumns {
 		out[i] = cols[ord]
 	}
+
 	return out
-}
-
-// primaryPKOrd returns the ordinal of the first PK column. For the
-// common single-column case that's the whole story; the legacy
-// IntegerRowid optimization (where the PK column's int64 doubles as
-// the SQLite rowid) only applies when len(PKColumns) == 1 and that
-// column's affinity is INTEGER.
-func (t *tableSchema) primaryPKOrd() int {
-	if len(t.PKColumns) == 0 {
-		return -1
-	}
-	return t.PKColumns[0]
-}
-
-// pkColumn returns the first PK column (for the common single-column
-// case). Composite callers should use PKColumns directly.
-func (t *tableSchema) pkColumn() *columnSchema {
-	ord := t.primaryPKOrd()
-	if ord < 0 || ord >= len(t.Columns) {
-		return nil
-	}
-	return &t.Columns[ord]
 }
 
 // isPKColumn reports whether the given column ordinal is part of
@@ -291,6 +250,7 @@ func pkPosition(t *tableSchema, ord int) int {
 			return i
 		}
 	}
+
 	return -1
 }
 
@@ -302,9 +262,11 @@ func (t *tableSchema) integerRowidFastPath() bool {
 	if t.SyntheticPK {
 		return true
 	}
+
 	if len(t.PKColumns) != 1 {
 		return false
 	}
+
 	return t.Columns[t.PKColumns[0]].Affinity == affinityInteger
 }
 
@@ -315,10 +277,12 @@ func emitSchema(ctx *effects.Context, schema *tableSchema) error {
 	if len(schema.TableID) == 0 {
 		return fmt.Errorf("sql: emitSchema: table %q has no TableID", schema.Name)
 	}
+
 	colsJSON, err := json.Marshal(schema.Columns)
 	if err != nil {
 		return fmt.Errorf("sql: marshal schema columns: %w", err)
 	}
+
 	idxJSON, err := json.Marshal(schema.Indexes)
 	if err != nil {
 		return fmt.Errorf("sql: marshal schema indexes: %w", err)
@@ -333,15 +297,19 @@ func emitSchema(ctx *effects.Context, schema *tableSchema) error {
 	if err := emitRawField(ctx, sk, schemaFieldTableID, schema.TableID); err != nil {
 		return err
 	}
+
 	if err := emitRawField(ctx, sk, schemaFieldColumns, colsJSON); err != nil {
 		return err
 	}
+
 	if err := emitRawField(ctx, sk, schemaFieldPK, pkJSON); err != nil {
 		return err
 	}
+
 	if err := emitRawField(ctx, sk, schemaFieldIndexes, idxJSON); err != nil {
 		return err
 	}
+
 	if schema.SyntheticPK {
 		if err := emitRawField(ctx, sk, schemaFieldSyntheticPK, []byte{1}); err != nil {
 			return err
@@ -358,9 +326,11 @@ func loadSchema(ctx *effects.Context, name string) (*tableSchema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sql: read schema %q: %w", name, err)
 	}
-	if reduced == nil || len(reduced.NetAdds) == 0 {
+
+	if reduced == nil || len(reduced.GetNetAdds()) == 0 {
 		return nil, ErrNoSuchTable
 	}
+
 	return schemaFromSnapshot(name, reduced)
 }
 
@@ -368,22 +338,24 @@ func loadSchema(ctx *effects.Context, name string) (*tableSchema, error) {
 // ReducedEffect. Callers that need the tips of the snapshot (for
 // dependency pinning) can fetch directly and reuse this decoder.
 func schemaFromSnapshot(name string, reduced *pb.ReducedEffect) (*tableSchema, error) {
-	if reduced == nil || len(reduced.NetAdds) == 0 {
+	if reduced == nil || len(reduced.GetNetAdds()) == 0 {
 		return nil, ErrNoSuchTable
 	}
 
-	colsEl, ok := reduced.NetAdds[schemaFieldColumns]
-	if !ok || colsEl.Data == nil {
+	colsEl, ok := reduced.GetNetAdds()[schemaFieldColumns]
+	if !ok || colsEl.GetData() == nil {
 		return nil, fmt.Errorf("sql: schema for %q missing columns field", name)
 	}
+
 	var cols []columnSchema
-	if err := json.Unmarshal(colsEl.Data.Decompress(), &cols); err != nil {
+	if err := json.Unmarshal(colsEl.GetData().Decompress(), &cols); err != nil {
 		return nil, fmt.Errorf("sql: unmarshal schema columns for %q: %w", name, err)
 	}
 
 	var pkCols []int
-	if pkEl, ok := reduced.NetAdds[schemaFieldPK]; ok && pkEl.Data != nil {
-		raw := pkEl.Data.Decompress()
+
+	if pkEl, ok := reduced.GetNetAdds()[schemaFieldPK]; ok && pkEl.GetData() != nil {
+		raw := pkEl.GetData().Decompress()
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw, &pkCols); err != nil {
 				return nil, fmt.Errorf("sql: unmarshal pk_columns for %q: %w", name, err)
@@ -392,8 +364,9 @@ func schemaFromSnapshot(name string, reduced *pb.ReducedEffect) (*tableSchema, e
 	}
 
 	var syntheticPK bool
-	if spkEl, ok := reduced.NetAdds[schemaFieldSyntheticPK]; ok && spkEl.Data != nil {
-		raw := spkEl.Data.Decompress()
+
+	if spkEl, ok := reduced.GetNetAdds()[schemaFieldSyntheticPK]; ok && spkEl.GetData() != nil {
+		raw := spkEl.GetData().Decompress()
 		if len(raw) > 0 && raw[0] != 0 {
 			syntheticPK = true
 		}
@@ -404,16 +377,18 @@ func schemaFromSnapshot(name string, reduced *pb.ReducedEffect) (*tableSchema, e
 	}
 
 	var tableID []byte
-	if idEl, ok := reduced.NetAdds[schemaFieldTableID]; ok && idEl.Data != nil {
-		tableID = idEl.Data.Decompress()
+	if idEl, ok := reduced.GetNetAdds()[schemaFieldTableID]; ok && idEl.GetData() != nil {
+		tableID = idEl.GetData().Decompress()
 	}
+
 	if len(tableID) == 0 {
 		return nil, fmt.Errorf("sql: schema for %q missing tableID field", name)
 	}
 
 	var indexes []indexSchema
-	if idxEl, ok := reduced.NetAdds[schemaFieldIndexes]; ok && idxEl.Data != nil {
-		raw := idxEl.Data.Decompress()
+
+	if idxEl, ok := reduced.GetNetAdds()[schemaFieldIndexes]; ok && idxEl.GetData() != nil {
+		raw := idxEl.GetData().Decompress()
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw, &indexes); err != nil {
 				return nil, fmt.Errorf("sql: unmarshal schema indexes for %q: %w", name, err)
@@ -438,14 +413,18 @@ func listTables(ctx *effects.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sql: read table list: %w", err)
 	}
-	if reduced == nil || len(reduced.NetAdds) == 0 {
+
+	if reduced == nil || len(reduced.GetNetAdds()) == 0 {
 		return nil, nil
 	}
-	names := make([]string, 0, len(reduced.NetAdds))
-	for name := range reduced.NetAdds {
+
+	names := make([]string, 0, len(reduced.GetNetAdds()))
+	for name := range reduced.GetNetAdds() {
 		names = append(names, name)
 	}
+
 	sort.Strings(names)
+
 	return names, nil
 }
 

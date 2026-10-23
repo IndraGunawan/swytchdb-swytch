@@ -32,6 +32,7 @@ import (
 func (e *Engine) HandleEval(cmd *shared.Command, w *shared.Writer, conn *shared.Connection, db *shared.Database, readOnly bool) {
 	if e.scriptRegistry == nil || e.luaVMPool == nil {
 		w.WriteError("ERR scripting not initialized")
+
 		return
 	}
 
@@ -43,6 +44,7 @@ func (e *Engine) HandleEval(cmd *shared.Command, w *shared.Writer, conn *shared.
 		} else {
 			w.WriteWrongNumArguments("eval")
 		}
+
 		return
 	}
 
@@ -53,12 +55,14 @@ func (e *Engine) HandleEval(cmd *shared.Command, w *shared.Writer, conn *shared.
 	numKeys, ok := shared.ParseInt64(cmd.Args[1])
 	if !ok || numKeys < 0 {
 		w.WriteError("ERR value is not an integer or out of range")
+
 		return
 	}
 
 	// Validate argument count
 	if len(cmd.Args) < 2+int(numKeys) {
 		w.WriteError("ERR Number of keys can't be greater than number of args")
+
 		return
 	}
 
@@ -67,10 +71,13 @@ func (e *Engine) HandleEval(cmd *shared.Command, w *shared.Writer, conn *shared.
 
 	if isEvalSha {
 		sha := strings.ToLower(string(scriptOrSha))
+
 		var found bool
+
 		script, found = e.scriptRegistry.Get(sha)
 		if !found {
 			w.WriteError("NOSCRIPT No matching script. Please use EVAL.")
+
 			return
 		}
 	} else {
@@ -143,11 +150,14 @@ func (e *Engine) executeScript(script []byte, keys, args []string, w *shared.Wri
 		// Check if it was killed via SCRIPT KILL
 		if sc.killed.Load() {
 			w.WriteError("ERR Script killed by user with SCRIPT KILL")
+
 			return
 		}
+
 		if ctx.Err() != nil {
 			// Context was cancelled (by SCRIPT KILL)
 			w.WriteError("ERR Script killed by user with SCRIPT KILL")
+
 			return
 		}
 		// Extract just the first line of the error (RESP errors must be single-line)
@@ -160,25 +170,29 @@ func (e *Engine) executeScript(script []byte, keys, args []string, w *shared.Wri
 		// Check if this is a Redis error that should be returned directly
 		errMsg = extractRedisScriptError(errMsg)
 		w.WriteError(errMsg)
+
 		return
 	}
 
 	// Get the return value (if any)
 	if L.GetTop() == 0 {
 		w.WriteNullBulkString()
+
 		return
 	}
+
 	ret := L.Get(-1)
 	L.Pop(1)
 
 	// Convert Lua value to RESP
-	luaToRESP(L, ret, w)
+	luaToRESP(ret, w)
 }
 
 // HandleScript handles SCRIPT subcommands.
 func (e *Engine) HandleScript(cmd *shared.Command, w *shared.Writer) {
 	if len(cmd.Args) < 1 {
 		w.WriteWrongNumArguments("script")
+
 		return
 	}
 
@@ -189,10 +203,10 @@ func (e *Engine) HandleScript(cmd *shared.Command, w *shared.Writer) {
 		e.handleScriptLoad(cmd, w)
 	case "EXISTS":
 		e.handleScriptExists(cmd, w)
-	case "FLUSH":
-		e.handleScriptFlush(cmd, w)
+	case subcommandFlush:
+		e.handleScriptFlush(w)
 	case "KILL":
-		e.handleScriptKill(cmd, w)
+		e.handleScriptKill(w)
 	case "DEBUG":
 		// DEBUG mode not supported, just acknowledge
 		w.WriteOK()
@@ -205,11 +219,13 @@ func (e *Engine) HandleScript(cmd *shared.Command, w *shared.Writer) {
 func (e *Engine) handleScriptLoad(cmd *shared.Command, w *shared.Writer) {
 	if len(cmd.Args) < 2 {
 		w.WriteWrongNumArguments("script load")
+
 		return
 	}
 
 	if e.scriptRegistry == nil {
 		w.WriteError("ERR scripting not initialized")
+
 		return
 	}
 
@@ -222,6 +238,7 @@ func (e *Engine) handleScriptLoad(cmd *shared.Command, w *shared.Writer) {
 	_, err := L.LoadString(string(script))
 	if err != nil {
 		w.WriteError("ERR Error compiling script: " + err.Error())
+
 		return
 	}
 
@@ -234,11 +251,13 @@ func (e *Engine) handleScriptLoad(cmd *shared.Command, w *shared.Writer) {
 func (e *Engine) handleScriptExists(cmd *shared.Command, w *shared.Writer) {
 	if len(cmd.Args) < 2 {
 		w.WriteWrongNumArguments("script exists")
+
 		return
 	}
 
 	if e.scriptRegistry == nil {
 		w.WriteError("ERR scripting not initialized")
+
 		return
 	}
 
@@ -253,6 +272,7 @@ func (e *Engine) handleScriptExists(cmd *shared.Command, w *shared.Writer) {
 
 	// Write results
 	w.WriteArray(len(results))
+
 	for _, exists := range results {
 		if exists {
 			w.WriteOne()
@@ -263,9 +283,10 @@ func (e *Engine) handleScriptExists(cmd *shared.Command, w *shared.Writer) {
 }
 
 // handleScriptFlush handles SCRIPT FLUSH command.
-func (e *Engine) handleScriptFlush(cmd *shared.Command, w *shared.Writer) {
+func (e *Engine) handleScriptFlush(w *shared.Writer) {
 	if e.scriptRegistry == nil {
 		w.WriteError("ERR scripting not initialized")
+
 		return
 	}
 
@@ -277,10 +298,11 @@ func (e *Engine) handleScriptFlush(cmd *shared.Command, w *shared.Writer) {
 }
 
 // handleScriptKill handles SCRIPT KILL command.
-func (e *Engine) handleScriptKill(cmd *shared.Command, w *shared.Writer) {
+func (e *Engine) handleScriptKill(w *shared.Writer) {
 	sc := e.runningScript.Load()
 	if sc == nil {
 		w.WriteError("NOTBUSY No scripts in execution right now.")
+
 		return
 	}
 

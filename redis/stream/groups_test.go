@@ -30,17 +30,17 @@ import (
 // xgroupCreate is a convenience to create a consumer group via the dispatcher and reset buf.
 func xgroupCreate(t *testing.T, env *testEnv, args ...string) {
 	t.Helper()
+
 	allArgs := append([]string{"CREATE"}, args...)
 	execHandler(t, handleXGroup, env, allArgs...)
 	env.buf.Reset()
 }
 
 // xreadgroup is a convenience to deliver entries via XREADGROUP non-blocking and reset buf.
-func xreadgroup(t *testing.T, env *testEnv, args ...string) string {
+func xreadgroup(t *testing.T, env *testEnv, args ...string) {
 	t.Helper()
-	result := execHandler(t, handleXReadGroupNonBlocking, env, args...)
+	execHandler(t, handleXReadGroupNonBlocking, env, args...)
 	env.buf.Reset()
-	return result
 }
 
 // --- XGROUP ---
@@ -55,6 +55,7 @@ func TestHandleXGroupCreate(t *testing.T) {
 	if result != "+OK\r\n" {
 		t.Errorf("XGROUP CREATE should return OK, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Duplicate group
@@ -62,6 +63,7 @@ func TestHandleXGroupCreate(t *testing.T) {
 	if !strings.Contains(result, "BUSYGROUP") {
 		t.Errorf("XGROUP CREATE duplicate should return BUSYGROUP, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Create group with MKSTREAM on non-existent stream
@@ -82,6 +84,7 @@ func TestHandleXGroupCreateConsumer(t *testing.T) {
 	if result != ":1\r\n" {
 		t.Errorf("XGROUP CREATECONSUMER should return 1, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Create existing consumer
@@ -152,6 +155,7 @@ func TestHandleXReadGroupNonBlocking(t *testing.T) {
 	if !strings.Contains(result, "1-0") || !strings.Contains(result, "2-0") {
 		t.Errorf("XREADGROUP with > should return all entries, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Read again with > should return nothing
@@ -159,6 +163,7 @@ func TestHandleXReadGroupNonBlocking(t *testing.T) {
 	if result != "*-1\r\n" {
 		t.Errorf("XREADGROUP with > after delivery should return null, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Read pending entries with 0
@@ -185,6 +190,7 @@ func TestHandleXAck(t *testing.T) {
 	if result != ":1\r\n" {
 		t.Errorf("XACK should return 1, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Acknowledge same entry again
@@ -192,6 +198,7 @@ func TestHandleXAck(t *testing.T) {
 	if result != ":0\r\n" {
 		t.Errorf("XACK already acked should return 0, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Read pending entries - should only have 2-0
@@ -220,14 +227,17 @@ func TestHandleXAckDel(t *testing.T) {
 	if !strings.Contains(result, ":1") {
 		t.Errorf("XACKDEL should acknowledge entries, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Wrong num args
 	cmd := &shared.Command{Args: [][]byte{[]byte("mystream")}, Runtime: env.eng, Context: env.ctx}
+
 	valid, _, _ := handleXAckDel(cmd, env.w, nil)
 	if valid {
 		t.Fatal("expected invalid for wrong args")
 	}
+
 	if !strings.Contains(env.buf.String(), "ERR") {
 		t.Errorf("expected error, got %q", env.buf.String())
 	}
@@ -252,9 +262,11 @@ func TestHandleXPending(t *testing.T) {
 	if !strings.Contains(result, "3") {
 		t.Errorf("XPENDING summary should show 3 pending entries, got %q", result)
 	}
+
 	if !strings.Contains(result, "consumer1") {
 		t.Errorf("XPENDING summary should list consumer1, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Extended form: XPENDING key group start end count
@@ -262,9 +274,11 @@ func TestHandleXPending(t *testing.T) {
 	if !strings.Contains(result, "1-0") {
 		t.Errorf("XPENDING extended should list entry 1-0, got %q", result)
 	}
+
 	if !strings.Contains(result, "consumer1") {
 		t.Errorf("XPENDING extended should list consumer1, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Extended form with consumer filter
@@ -272,6 +286,7 @@ func TestHandleXPending(t *testing.T) {
 	if !strings.Contains(result, "1-0") {
 		t.Errorf("XPENDING with consumer filter should list entries, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Non-existent group
@@ -299,6 +314,7 @@ func TestHandleXClaim(t *testing.T) {
 	if !strings.Contains(result, "1-0") || !strings.Contains(result, "2-0") {
 		t.Errorf("XCLAIM should return claimed entries, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Verify consumer2 now owns those entries via XPENDING
@@ -306,6 +322,7 @@ func TestHandleXClaim(t *testing.T) {
 	if !strings.Contains(result, "1-0") || !strings.Contains(result, "2-0") {
 		t.Errorf("XPENDING should show entries owned by consumer2, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// XCLAIM with JUSTID
@@ -313,6 +330,7 @@ func TestHandleXClaim(t *testing.T) {
 	if strings.Contains(result, "f1") {
 		t.Errorf("XCLAIM JUSTID should not include field data, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// XCLAIM with FORCE on non-existent entry
@@ -341,6 +359,7 @@ func TestHandleXAutoClaim(t *testing.T) {
 	if !strings.Contains(result, "1-0") {
 		t.Errorf("XAUTOCLAIM should return claimed entries, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Autoclaim with COUNT
@@ -348,6 +367,7 @@ func TestHandleXAutoClaim(t *testing.T) {
 	if !strings.Contains(result, "1-0") && !strings.Contains(result, "2-0") && !strings.Contains(result, "3-0") {
 		t.Errorf("XAUTOCLAIM COUNT 1 should return at least one entry, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Autoclaim with JUSTID
@@ -369,9 +389,11 @@ func TestHandleXInfoGroups(t *testing.T) {
 	if !strings.Contains(result, "mygroup") {
 		t.Errorf("XINFO GROUPS should contain 'mygroup', got %q", result)
 	}
+
 	if !strings.Contains(result, "consumers") {
 		t.Errorf("XINFO GROUPS should contain 'consumers', got %q", result)
 	}
+
 	if !strings.Contains(result, "pending") {
 		t.Errorf("XINFO GROUPS should contain 'pending', got %q", result)
 	}
@@ -392,9 +414,11 @@ func TestHandleXInfoConsumers(t *testing.T) {
 	if !strings.Contains(result, "consumer1") {
 		t.Errorf("XINFO CONSUMERS should contain 'consumer1', got %q", result)
 	}
+
 	if !strings.Contains(result, "idle") {
 		t.Errorf("XINFO CONSUMERS should contain 'idle', got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Non-existent group
@@ -427,6 +451,7 @@ func TestHandleXAddAckedTrimming(t *testing.T) {
 	if result != ":6\r\n" {
 		t.Errorf("XLEN after ACKED MAXLEN should be 6 (pending entries not trimmed), got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Acknowledge entries 1-3
@@ -447,6 +472,7 @@ func TestHandleXAddAckedTrimming(t *testing.T) {
 	if result != ":2\r\n" {
 		t.Errorf("XLEN after ACKED MAXLEN 2 should be 2, got %q", result)
 	}
+
 	env.buf.Reset()
 
 	// Add entry 8 with MAXLEN 2 and ACKED

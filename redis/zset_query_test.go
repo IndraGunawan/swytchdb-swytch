@@ -31,6 +31,7 @@ import (
 // seedQueryZSet seeds ZADD myzset 1 a 2 b 3 c (3 members only, for query tests)
 func seedQueryZSet(t *testing.T, h *Handler, conn *shared.Connection) {
 	t.Helper()
+
 	buf := &bytes.Buffer{}
 	w := shared.NewWriter(buf)
 	cmd := &shared.Command{
@@ -43,29 +44,32 @@ func seedQueryZSet(t *testing.T, h *Handler, conn *shared.Connection) {
 		},
 	}
 	h.ExecuteInto(cmd, w, conn)
+
 	if got := buf.String(); got != ":3\r\n" {
 		t.Fatalf("ZADD seed got %q, want %q", got, ":3\r\n")
 	}
 }
 
 // seedQueryStringKey creates a string key for WRONGTYPE testing
-func seedQueryStringKey(t *testing.T, h *Handler, conn *shared.Connection, key string) {
+func seedQueryStringKey(t *testing.T, h *Handler, conn *shared.Connection) {
 	t.Helper()
+
 	buf := &bytes.Buffer{}
 	w := shared.NewWriter(buf)
 	h.ExecuteInto(&shared.Command{
 		Type: shared.CmdSet,
-		Args: [][]byte{[]byte(key), []byte("value")},
+		Args: [][]byte{[]byte("strkey"), []byte("value")},
 	}, w, conn)
 }
 
 func TestZScore(t *testing.T) {
 	h := newHandlerWithEffects()
 	defer h.Close()
+
 	conn := newEffectsConn(h)
 
 	seedQueryZSet(t, h, conn)
-	seedQueryStringKey(t, h, conn, "strkey")
+	seedQueryStringKey(t, h, conn)
 
 	tests := []struct {
 		name   string
@@ -127,6 +131,7 @@ func TestZScore(t *testing.T) {
 			buf := &bytes.Buffer{}
 			w := shared.NewWriter(buf)
 			h.ExecuteInto(tt.cmd, w, conn)
+
 			if got := buf.String(); got != tt.expect {
 				t.Errorf("got %q, want %q", got, tt.expect)
 			}
@@ -137,10 +142,11 @@ func TestZScore(t *testing.T) {
 func TestZMScore(t *testing.T) {
 	h := newHandlerWithEffects()
 	defer h.Close()
+
 	conn := newEffectsConn(h)
 
 	seedQueryZSet(t, h, conn)
-	seedQueryStringKey(t, h, conn, "strkey")
+	seedQueryStringKey(t, h, conn)
 
 	tests := []struct {
 		name   string
@@ -194,6 +200,7 @@ func TestZMScore(t *testing.T) {
 			buf := &bytes.Buffer{}
 			w := shared.NewWriter(buf)
 			h.ExecuteInto(tt.cmd, w, conn)
+
 			if got := buf.String(); got != tt.expect {
 				t.Errorf("got %q, want %q", got, tt.expect)
 			}
@@ -204,10 +211,11 @@ func TestZMScore(t *testing.T) {
 func TestZCard(t *testing.T) {
 	h := newHandlerWithEffects()
 	defer h.Close()
+
 	conn := newEffectsConn(h)
 
 	seedQueryZSet(t, h, conn)
-	seedQueryStringKey(t, h, conn, "strkey")
+	seedQueryStringKey(t, h, conn)
 
 	tests := []struct {
 		name   string
@@ -245,6 +253,7 @@ func TestZCard(t *testing.T) {
 			buf := &bytes.Buffer{}
 			w := shared.NewWriter(buf)
 			h.ExecuteInto(tt.cmd, w, conn)
+
 			if got := buf.String(); got != tt.expect {
 				t.Errorf("got %q, want %q", got, tt.expect)
 			}
@@ -255,10 +264,11 @@ func TestZCard(t *testing.T) {
 func TestZRank(t *testing.T) {
 	h := newHandlerWithEffects()
 	defer h.Close()
+
 	conn := newEffectsConn(h)
 
 	seedQueryZSet(t, h, conn)
-	seedQueryStringKey(t, h, conn, "strkey")
+	seedQueryStringKey(t, h, conn)
 
 	tests := []struct {
 		name   string
@@ -320,6 +330,7 @@ func TestZRank(t *testing.T) {
 			buf := &bytes.Buffer{}
 			w := shared.NewWriter(buf)
 			h.ExecuteInto(tt.cmd, w, conn)
+
 			if got := buf.String(); got != tt.expect {
 				t.Errorf("got %q, want %q", got, tt.expect)
 			}
@@ -330,10 +341,11 @@ func TestZRank(t *testing.T) {
 func TestZRevRank(t *testing.T) {
 	h := newHandlerWithEffects()
 	defer h.Close()
+
 	conn := newEffectsConn(h)
 
 	seedQueryZSet(t, h, conn)
-	seedQueryStringKey(t, h, conn, "strkey")
+	seedQueryStringKey(t, h, conn)
 
 	tests := []struct {
 		name   string
@@ -395,6 +407,7 @@ func TestZRevRank(t *testing.T) {
 			buf := &bytes.Buffer{}
 			w := shared.NewWriter(buf)
 			h.ExecuteInto(tt.cmd, w, conn)
+
 			if got := buf.String(); got != tt.expect {
 				t.Errorf("got %q, want %q", got, tt.expect)
 			}
@@ -405,10 +418,11 @@ func TestZRevRank(t *testing.T) {
 func TestZCount(t *testing.T) {
 	h := newHandlerWithEffects()
 	defer h.Close()
+
 	conn := newEffectsConn(h)
 
 	seedQueryZSet(t, h, conn)
-	seedQueryStringKey(t, h, conn, "strkey")
+	seedQueryStringKey(t, h, conn)
 
 	tests := []struct {
 		name   string
@@ -486,6 +500,7 @@ func TestZCount(t *testing.T) {
 			buf := &bytes.Buffer{}
 			w := shared.NewWriter(buf)
 			h.ExecuteInto(tt.cmd, w, conn)
+
 			if got := buf.String(); got != tt.expect {
 				t.Errorf("got %q, want %q", got, tt.expect)
 			}
@@ -496,10 +511,11 @@ func TestZCount(t *testing.T) {
 func TestZRandMember(t *testing.T) {
 	h := newHandlerWithEffects()
 	defer h.Close()
+
 	conn := newEffectsConn(h)
 
 	seedQueryZSet(t, h, conn)
-	seedQueryStringKey(t, h, conn, "strkey")
+	seedQueryStringKey(t, h, conn)
 
 	t.Run("positive count returns array of distinct members", func(t *testing.T) {
 		buf := &bytes.Buffer{}
@@ -591,6 +607,7 @@ func TestZRandMember(t *testing.T) {
 			"$1\r\nb\r\n",
 			"$1\r\nc\r\n",
 		}
+
 		found := slices.Contains(validMembers, got)
 		if !found {
 			t.Errorf("got %q, want one of %v", got, validMembers)

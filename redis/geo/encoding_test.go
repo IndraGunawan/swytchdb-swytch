@@ -21,6 +21,7 @@ package geo
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,7 @@ func TestGeoHashEncodeDecodRoundtrip(t *testing.T) {
 			if math.Abs(gotLon-tt.lon) > 0.0001 {
 				t.Errorf("longitude: got %f, want %f (diff %f)", gotLon, tt.lon, math.Abs(gotLon-tt.lon))
 			}
+
 			if math.Abs(gotLat-tt.lat) > 0.0001 {
 				t.Errorf("latitude: got %f, want %f (diff %f)", gotLat, tt.lat, math.Abs(gotLat-tt.lat))
 			}
@@ -59,13 +61,14 @@ func TestGeoHashEncodeDecodRoundtrip(t *testing.T) {
 func TestGeoHashToString(t *testing.T) {
 	// Encode a known location and verify the string is 11 characters
 	hash := geoHashEncodeWithRange(13.361389, 38.115556, -180, 180, -90, 90)
+
 	s := geoHashToString(hash)
 	if len(s) != 11 {
 		t.Errorf("expected 11-char geohash string, got %d chars: %q", len(s), s)
 	}
 	// Should only contain valid base32 characters
 	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'b' && c <= 'z' && c != 'i' && c != 'l' && c != 'o')) {
+		if !strings.ContainsRune("0123456789bcdefghjkmnpqrstuvwxyz", c) {
 			t.Errorf("invalid geohash character: %c in %q", c, s)
 		}
 	}
@@ -186,6 +189,7 @@ func TestInterleaveDeinterleaveRoundtrip(t *testing.T) {
 		interleaved := interleave64(tt.x, tt.y)
 		result := deinterleave64(interleaved)
 		gotX := uint32(result)
+
 		gotY := uint32(result >> 32)
 		if gotX != tt.x || gotY != tt.y {
 			t.Errorf("roundtrip(%d, %d): got (%d, %d)", tt.x, tt.y, gotX, gotY)

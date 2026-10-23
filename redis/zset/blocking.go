@@ -44,12 +44,14 @@ func handleBlockingZPop(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 		} else {
 			w.WriteWrongNumArguments("bzpopmax")
 		}
+
 		return
 	}
 
 	timeout, errMsg := shared.ParseBlockingTimeout(string(cmd.Args[len(cmd.Args)-1]))
 	if errMsg != "" {
 		w.WriteError(errMsg)
+
 		return
 	}
 
@@ -58,29 +60,37 @@ func handleBlockingZPop(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 	// Check for WRONGTYPE before blocking
 	for _, key := range keys {
 		keyStr := string(key)
+
 		_, _, exists, wrongType, err := getZSetSnapshot(cmd, keyStr)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if exists && wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 	}
 
 	// In script context, use non-blocking behavior (same as transactions)
 	if conn.InScript {
-		var valid bool
-		var runner shared.CommandRunner
+		var (
+			valid  bool
+			runner shared.CommandRunner
+		)
 		if popMin {
-			valid, _, runner = handleBZPopMinNonBlocking(cmd, w, db)
+			valid, _, runner = handleBZPopMinNonBlocking(cmd, w)
 		} else {
-			valid, _, runner = handleBZPopMaxNonBlocking(cmd, w, db)
+			valid, _, runner = handleBZPopMaxNonBlocking(cmd, w)
 		}
+
 		if valid && runner != nil {
 			runner()
 		}
+
 		return
 	}
 
@@ -92,6 +102,7 @@ func handleBlockingZPop(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 	reg, err := db.Manager().Subscriptions.Register(ctx, keys...)
 	if err != nil {
 		w.WriteError("ERR " + err.Error())
+
 		return
 	}
 	defer reg.Cancel()
@@ -101,11 +112,14 @@ func handleBlockingZPop(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 		// Try to pop from each key in order
 		for _, key := range keys {
 			keyStr := string(key)
-			entry, found, err := tryZPop(cmd, keyStr, db, popMin, reg)
+
+			entry, found, err := tryZPop(cmd, keyStr, popMin, reg)
 			if err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
+
 			if found {
 				reg.Cancel()
 
@@ -113,6 +127,7 @@ func handleBlockingZPop(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 				w.WriteBulkStringStr(keyStr)
 				w.WriteBulkStringStr(entry.Member)
 				w.WriteScore(entry.Score)
+
 				return
 			}
 		}
@@ -121,9 +136,12 @@ func handleBlockingZPop(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 		if _, err := reg.Wait(); err != nil {
 			if conn.WasUnblockedWithError() {
 				w.WriteError("UNBLOCKED client unblocked via CLIENT UNBLOCK")
+
 				return
 			}
+
 			w.WriteNullArray()
+
 			return
 		}
 		// Woken up, loop back to try pop again
@@ -133,7 +151,7 @@ func handleBlockingZPop(cmd *shared.Command, w *shared.Writer, db *shared.Databa
 // tryZPop attempts to pop an element from a zset key.
 // Only pops if the registration is the oldest waiter for this key (fairness).
 // Returns the entry and true if successful, empty and false otherwise.
-func tryZPop(cmd *shared.Command, key string, db *shared.Database, popMin bool, reg *shared.Registration[struct{}]) (shared.ZSetEntry, bool, error) {
+func tryZPop(cmd *shared.Command, key string, popMin bool, reg *shared.Registration[struct{}]) (shared.ZSetEntry, bool, error) {
 	if reg == nil {
 		panic("tryZPop called without registration")
 	}
@@ -147,6 +165,7 @@ func tryZPop(cmd *shared.Command, key string, db *shared.Database, popMin bool, 
 	if err != nil {
 		return shared.ZSetEntry{}, false, err
 	}
+
 	if !exists || wrongType {
 		return shared.ZSetEntry{}, false, nil
 	}
@@ -183,36 +202,42 @@ func tryZPop(cmd *shared.Command, key string, db *shared.Database, popMin bool, 
 func handleBZMPop(cmd *shared.Command, w *shared.Writer, db *shared.Database, conn *shared.Connection) {
 	// In script context, use non-blocking behavior (same as transactions)
 	if conn.InScript {
-		valid, _, runner := handleBZMPopNonBlocking(cmd, w, db)
+		valid, _, runner := handleBZMPopNonBlocking(cmd, w)
 		if valid && runner != nil {
 			runner()
 		}
+
 		return
 	}
 
 	if len(cmd.Args) < 4 {
 		w.WriteWrongNumArguments("bzmpop")
+
 		return
 	}
 
 	timeout, errMsg := shared.ParseBlockingTimeout(string(cmd.Args[0]))
 	if errMsg != "" {
 		w.WriteError(errMsg)
+
 		return
 	}
 
 	numKeys, err := strconv.Atoi(string(cmd.Args[1]))
 	if err != nil || numKeys <= 0 {
 		w.WriteError("ERR numkeys should be greater than 0")
+
 		return
 	}
 
 	if len(cmd.Args) < numKeys+3 {
 		w.WriteSyntaxError()
+
 		return
 	}
 
 	keyStrs := make([]string, numKeys)
+
 	keyBytes := make([][]byte, numKeys)
 	for i := range numKeys {
 		keyStrs[i] = string(cmd.Args[2+i])
@@ -221,42 +246,54 @@ func handleBZMPop(cmd *shared.Command, w *shared.Writer, db *shared.Database, co
 
 	// Parse MIN/MAX
 	directionArg := shared.ToUpper(cmd.Args[2+numKeys])
+
 	var popMin bool
+
 	switch string(directionArg) {
-	case "MIN":
+	case keywordMin:
 		popMin = true
-	case "MAX":
+	case keywordMax:
 		popMin = false
 	default:
 		w.WriteSyntaxError()
+
 		return
 	}
 
 	// Parse optional COUNT
 	count := 1
 	hasCount := false
+
 	argIdx := 3 + numKeys
 	for argIdx < len(cmd.Args) {
 		opt := shared.ToUpper(cmd.Args[argIdx])
-		if string(opt) == "COUNT" {
+		if string(opt) == optionCount {
 			if hasCount {
 				w.WriteSyntaxError()
+
 				return
 			}
+
 			hasCount = true
+
 			argIdx++
 			if argIdx >= len(cmd.Args) {
 				w.WriteSyntaxError()
+
 				return
 			}
+
 			count, err = strconv.Atoi(string(cmd.Args[argIdx]))
 			if err != nil || count <= 0 {
 				w.WriteError("ERR count must be positive")
+
 				return
 			}
+
 			argIdx++
 		} else {
 			w.WriteSyntaxError()
+
 			return
 		}
 	}
@@ -266,10 +303,13 @@ func handleBZMPop(cmd *shared.Command, w *shared.Writer, db *shared.Database, co
 		_, _, exists, wrongType, err := getZSetSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if exists && wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 	}
@@ -281,6 +321,7 @@ func handleBZMPop(cmd *shared.Command, w *shared.Writer, db *shared.Database, co
 	reg, regErr := db.Manager().Subscriptions.Register(ctx, keyBytes...)
 	if regErr != nil {
 		w.WriteError("ERR " + regErr.Error())
+
 		return
 	}
 	defer reg.Cancel()
@@ -292,8 +333,10 @@ func handleBZMPop(cmd *shared.Command, w *shared.Writer, db *shared.Database, co
 			entries, found, err := tryZMPop(cmd, key, popMin, count, reg)
 			if err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
+
 			if found {
 				reg.Cancel()
 
@@ -301,11 +344,13 @@ func handleBZMPop(cmd *shared.Command, w *shared.Writer, db *shared.Database, co
 				w.WriteArray(2)
 				w.WriteBulkStringStr(key)
 				w.WriteArray(len(entries))
+
 				for _, entry := range entries {
 					w.WriteArray(2)
 					w.WriteBulkStringStr(entry.Member)
 					w.WriteScore(entry.Score)
 				}
+
 				return
 			}
 		}
@@ -314,9 +359,12 @@ func handleBZMPop(cmd *shared.Command, w *shared.Writer, db *shared.Database, co
 		if _, err := reg.Wait(); err != nil {
 			if conn.WasUnblockedWithError() {
 				w.WriteError("UNBLOCKED client unblocked via CLIENT UNBLOCK")
+
 				return
 			}
+
 			w.WriteNullArray()
+
 			return
 		}
 		// Woken up, loop back to try pop again
@@ -340,6 +388,7 @@ func tryZMPop(cmd *shared.Command, key string, popMin bool, count int, reg *shar
 	if err != nil {
 		return nil, false, err
 	}
+
 	if !exists || wrongType {
 		return nil, false, nil
 	}
@@ -380,24 +429,26 @@ func tryZMPop(cmd *shared.Command, key string, popMin bool, count int, reg *shar
 }
 
 // handleBZPopMinNonBlocking handles BZPOPMIN inside transactions (non-blocking mode)
-func handleBZPopMinNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
-	return handleZPopNonBlocking(cmd, w, db, true, "bzpopmin")
+func handleBZPopMinNonBlocking(cmd *shared.Command, w *shared.Writer) (valid bool, keys []string, runner shared.CommandRunner) {
+	return handleZPopNonBlocking(cmd, w, true, "bzpopmin")
 }
 
 // handleBZPopMaxNonBlocking handles BZPOPMAX inside transactions (non-blocking mode)
-func handleBZPopMaxNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
-	return handleZPopNonBlocking(cmd, w, db, false, "bzpopmax")
+func handleBZPopMaxNonBlocking(cmd *shared.Command, w *shared.Writer) (valid bool, keys []string, runner shared.CommandRunner) {
+	return handleZPopNonBlocking(cmd, w, false, "bzpopmax")
 }
 
 // handleZPopNonBlocking is the shared implementation for non-blocking BZPOPMIN/BZPOPMAX
-func handleZPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.Database, popMin bool, cmdName string) (valid bool, keys []string, runner shared.CommandRunner) {
+func handleZPopNonBlocking(cmd *shared.Command, w *shared.Writer, popMin bool, cmdName string) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 2 {
 		w.WriteWrongNumArguments(cmdName)
+
 		return
 	}
 
 	// Last arg is timeout (ignored in non-blocking mode)
 	keyArgs := cmd.Args[:len(cmd.Args)-1]
+
 	keys = make([]string, len(keyArgs))
 	for i, arg := range keyArgs {
 		keys[i] = string(arg)
@@ -409,13 +460,17 @@ func handleZPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.Dat
 			snap, tips, exists, wrongType, err := getZSetSnapshot(cmd, keyStr)
 			if err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
+
 			if !exists {
 				continue
 			}
+
 			if wrongType {
 				w.WriteWrongType()
+
 				return
 			}
 
@@ -431,6 +486,7 @@ func handleZPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.Dat
 				Kind: &pb.Effect_Noop{Noop: &pb.NoopEffect{}},
 			}, tips); err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
 
@@ -443,6 +499,7 @@ func handleZPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.Dat
 
 			if err := emitZSetRemove(cmd, keyStr, entry.Member); err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
 
@@ -450,19 +507,22 @@ func handleZPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.Dat
 			w.WriteBulkStringStr(keyStr)
 			w.WriteBulkStringStr(entry.Member)
 			w.WriteScore(entry.Score)
+
 			return
 		}
 
 		// No data found
 		w.WriteNullArray()
 	}
+
 	return
 }
 
 // handleBZMPopNonBlocking handles BZMPOP inside transactions (non-blocking mode)
-func handleBZMPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
+func handleBZMPopNonBlocking(cmd *shared.Command, w *shared.Writer) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 4 {
 		w.WriteWrongNumArguments("bzmpop")
+
 		return
 	}
 
@@ -470,11 +530,13 @@ func handleBZMPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.D
 	numKeys, err := strconv.Atoi(string(cmd.Args[1]))
 	if err != nil || numKeys <= 0 {
 		w.WriteError("ERR numkeys should be greater than 0")
+
 		return
 	}
 
 	if len(cmd.Args) < numKeys+3 {
 		w.WriteSyntaxError()
+
 		return
 	}
 
@@ -485,42 +547,54 @@ func handleBZMPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.D
 
 	// Parse MIN/MAX
 	directionArg := shared.ToUpper(cmd.Args[2+numKeys])
+
 	var popMin bool
+
 	switch string(directionArg) {
-	case "MIN":
+	case keywordMin:
 		popMin = true
-	case "MAX":
+	case keywordMax:
 		popMin = false
 	default:
 		w.WriteSyntaxError()
+
 		return
 	}
 
 	// Parse optional COUNT
 	count := 1
 	hasCount := false
+
 	argIdx := 3 + numKeys
 	for argIdx < len(cmd.Args) {
 		opt := shared.ToUpper(cmd.Args[argIdx])
-		if string(opt) == "COUNT" {
+		if string(opt) == optionCount {
 			if hasCount {
 				w.WriteSyntaxError()
+
 				return
 			}
+
 			hasCount = true
+
 			argIdx++
 			if argIdx >= len(cmd.Args) {
 				w.WriteSyntaxError()
+
 				return
 			}
+
 			count, err = strconv.Atoi(string(cmd.Args[argIdx]))
 			if err != nil || count <= 0 {
 				w.WriteError("ERR count must be positive")
+
 				return
 			}
+
 			argIdx++
 		} else {
 			w.WriteSyntaxError()
+
 			return
 		}
 	}
@@ -532,13 +606,17 @@ func handleBZMPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.D
 			snap, tips, exists, wrongType, err := getZSetSnapshot(cmd, key)
 			if err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
+
 			if !exists {
 				continue
 			}
+
 			if wrongType {
 				w.WriteWrongType()
+
 				return
 			}
 
@@ -554,6 +632,7 @@ func handleBZMPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.D
 				Kind: &pb.Effect_Noop{Noop: &pb.NoopEffect{}},
 			}, tips); err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
 
@@ -572,6 +651,7 @@ func handleBZMPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.D
 			for _, e := range entries {
 				if err := emitZSetRemove(cmd, key, e.Member); err != nil {
 					w.WriteError(err.Error())
+
 					return
 				}
 			}
@@ -580,16 +660,19 @@ func handleBZMPopNonBlocking(cmd *shared.Command, w *shared.Writer, db *shared.D
 			w.WriteArray(2)
 			w.WriteBulkStringStr(key)
 			w.WriteArray(len(entries))
+
 			for _, entry := range entries {
 				w.WriteArray(2)
 				w.WriteBulkStringStr(entry.Member)
 				w.WriteScore(entry.Score)
 			}
+
 			return
 		}
 
 		// No data found
 		w.WriteNullArray()
 	}
+
 	return
 }

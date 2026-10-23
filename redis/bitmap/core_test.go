@@ -40,11 +40,14 @@ func runHandler(handler shared.HandlerFunc, cmd *shared.Command) string {
 
 	buf := &bytes.Buffer{}
 	w := shared.NewWriter(buf)
+
 	valid, _, runner := handler(cmd, w, nil)
 	if valid && runner != nil {
 		runner()
+
 		_ = ctx.Flush()
 	}
+
 	return buf.String()
 }
 
@@ -56,16 +59,19 @@ func runHandlerWith(eng *effects.Engine, ctx *effects.Context, handler shared.Ha
 
 	buf := &bytes.Buffer{}
 	w := shared.NewWriter(buf)
+
 	valid, _, runner := handler(cmd, w, nil)
 	if valid && runner != nil {
 		runner()
+
 		_ = ctx.Flush()
 	}
+
 	return buf.String()
 }
 
 // seedBitmapData seeds a key with raw bitmap data as KEYED elements.
-func seedBitmapData(eng *effects.Engine, ctx *effects.Context, key string, data []byte) {
+func seedBitmapData(ctx *effects.Context, key string, data []byte) {
 	for byteIdx, b := range data {
 		for bitIdx := 7; bitIdx >= 0; bitIdx-- {
 			if (b>>uint(bitIdx))&1 == 1 {
@@ -83,6 +89,7 @@ func seedBitmapData(eng *effects.Engine, ctx *effects.Context, key string, data 
 			}
 		}
 	}
+
 	_ = ctx.Flush()
 }
 
@@ -200,6 +207,7 @@ func TestSetBitGetBit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			eng := effects.NewTestEngine()
+
 			ctx := eng.NewContext()
 			for i, c := range tt.cmds {
 				got := runHandlerWith(eng, ctx, c.handler, c.cmd)
@@ -251,7 +259,7 @@ func TestBitCount(t *testing.T) {
 	// Set up test data: "foobar" = 0x66 0x6f 0x6f 0x62 0x61 0x72
 	// Binary: 01100110 01101111 01101111 01100010 01100001 01110010
 	// Total bits set: 4+6+6+3+3+4 = 26
-	seedBitmapData(eng, ctx, "mykey", []byte("foobar"))
+	seedBitmapData(ctx, "mykey", []byte("foobar"))
 
 	tests := []struct {
 		name   string
@@ -305,7 +313,7 @@ func TestBitPos(t *testing.T) {
 	ctx := eng.NewContext()
 
 	// Set up test data: \xff\xf0\x00 = 11111111 11110000 00000000
-	seedBitmapData(eng, ctx, "mykey", []byte{0xff, 0xf0, 0x00})
+	seedBitmapData(ctx, "mykey", []byte{0xff, 0xf0, 0x00})
 
 	tests := []struct {
 		name   string
@@ -359,8 +367,8 @@ func TestBitOp(t *testing.T) {
 	ctx := eng.NewContext()
 
 	// Set up test data
-	seedBitmapData(eng, ctx, "key1", []byte{0xff, 0x0f})
-	seedBitmapData(eng, ctx, "key2", []byte{0x0f, 0xff})
+	seedBitmapData(ctx, "key1", []byte{0xff, 0x0f})
+	seedBitmapData(ctx, "key2", []byte{0x0f, 0xff})
 
 	tests := []struct {
 		name      string
@@ -411,9 +419,11 @@ func TestBitOp(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GetSnapshot error: %v", err)
 			}
+
 			if snap == nil {
 				t.Fatalf("destination key %q not found", tt.checkDest)
 			}
+
 			gotData := reconstructBitmapBytes(snap)
 			if !bytes.Equal(gotData, tt.checkData) {
 				t.Errorf("dest data = %v, want %v", gotData, tt.checkData)
@@ -582,6 +592,7 @@ func TestBitFieldOverflow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			eng := effects.NewTestEngine()
+
 			ctx := eng.NewContext()
 			for i, c := range tt.cmds {
 				got := runHandlerWith(eng, ctx, handleBitField, c.cmd)
@@ -639,6 +650,7 @@ func TestBitIndexing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if snap == nil {
 		t.Fatal("key not found")
 	}
@@ -656,6 +668,7 @@ func TestBitIndexing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	data = reconstructBitmapBytes(snap)
 	// Should now be 0x81 (MSB and LSB set)
 	if len(data) == 0 || data[0] != 0x81 {
@@ -686,6 +699,7 @@ func TestApplyOverflowNoPanic(t *testing.T) {
 			if !signed && bits == 64 {
 				continue
 			}
+
 			for _, behavior := range behaviors {
 				for _, value := range testValues {
 					func() {
@@ -695,6 +709,7 @@ func TestApplyOverflowNoPanic(t *testing.T) {
 									bits, signed, behavior, value, r)
 							}
 						}()
+
 						_ = applyOverflow(value, bits, signed, behavior)
 					}()
 				}
@@ -726,6 +741,7 @@ func TestApplyOverflowI64(t *testing.T) {
 					t.Errorf("panic: %v", r)
 				}
 			}()
+
 			result := applyOverflow(tt.value, 64, true, tt.behavior)
 			// For i64, the result should always equal the input (no overflow possible in int64)
 			if result != tt.value {

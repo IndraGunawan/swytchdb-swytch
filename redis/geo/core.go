@@ -31,41 +31,48 @@ import (
 
 // --- Helper functions (mirror zset/core.go pattern) ---
 
-func getGeoSnapshot(cmd *shared.Command, key string) (snap *pb.ReducedEffect, tips []effects.Tip, exists bool, wrongType bool, err error) {
-	snap, tips, err = cmd.Context.GetSnapshot(key)
+func getGeoSnapshot(cmd *shared.Command, key string) (snap *pb.ReducedEffect, exists bool, wrongType bool, err error) {
+	snap, _, err = cmd.Context.GetSnapshot(key)
 	if err != nil {
-		return nil, nil, false, false, err
+		return nil, false, false, err
 	}
-	if snap == nil || snap.Op == pb.EffectOp_REMOVE_OP {
-		return nil, tips, false, false, nil
+
+	if snap == nil || snap.GetOp() == pb.EffectOp_REMOVE_OP {
+		return nil, false, false, nil
 	}
-	if snap.Collection == pb.CollectionKind_KEYED {
-		return snap, tips, true, false, nil
+
+	if snap.GetCollection() == pb.CollectionKind_KEYED {
+		return snap, true, false, nil
 	}
-	if snap.Collection == pb.CollectionKind_SCALAR && (snap.TypeTag == pb.ValueType_TYPE_GEO || snap.TypeTag == pb.ValueType_TYPE_ZSET) {
-		return snap, tips, true, false, nil
+
+	if snap.GetCollection() == pb.CollectionKind_SCALAR && (snap.GetTypeTag() == pb.ValueType_TYPE_GEO || snap.GetTypeTag() == pb.ValueType_TYPE_ZSET) {
+		return snap, true, false, nil
 	}
-	return nil, tips, true, true, nil
+
+	return nil, true, true, nil
 }
 
 func geoMemberScore(snap *pb.ReducedEffect, member string) (float64, bool) {
 	if snap == nil || snap.NetAdds == nil {
 		return 0, false
 	}
-	elem, ok := snap.NetAdds[member]
+
+	elem, ok := snap.GetNetAdds()[member]
 	if !ok {
 		return 0, false
 	}
-	return elem.Data.GetFloatVal(), true
+
+	return elem.GetData().GetFloatVal(), true
 }
 
 func geoSortedEntries(snap *pb.ReducedEffect) []geoEntry {
 	if snap == nil || snap.NetAdds == nil {
 		return nil
 	}
-	entries := make([]geoEntry, 0, len(snap.NetAdds))
-	for member, elem := range snap.NetAdds {
-		hash := uint64(elem.Data.GetFloatVal())
+
+	entries := make([]geoEntry, 0, len(snap.GetNetAdds()))
+	for member, elem := range snap.GetNetAdds() {
+		hash := uint64(elem.GetData().GetFloatVal())
 		lon, lat := geoHashDecode(hash)
 		entries = append(entries, geoEntry{
 			Member:    member,
@@ -74,12 +81,15 @@ func geoSortedEntries(snap *pb.ReducedEffect) []geoEntry {
 			Latitude:  lat,
 		})
 	}
+
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Hash != entries[j].Hash {
 			return entries[i].Hash < entries[j].Hash
 		}
+
 		return entries[i].Member < entries[j].Member
 	})
+
 	return entries
 }
 
@@ -92,17 +102,6 @@ func emitGeoInsert(cmd *shared.Command, key string, member string, geohash float
 			Collection: pb.CollectionKind_KEYED,
 			Id:         []byte(member),
 			Value:      &pb.DataEffect_FloatVal{FloatVal: geohash},
-		}},
-	})
-}
-
-func emitGeoRemove(cmd *shared.Command, key string, member string) error {
-	return cmd.Context.Emit(&pb.Effect{
-		Key: []byte(key),
-		Kind: &pb.Effect_Data{Data: &pb.DataEffect{
-			Op:         pb.EffectOp_REMOVE_OP,
-			Collection: pb.CollectionKind_KEYED,
-			Id:         []byte(member),
 		}},
 	})
 }
@@ -129,6 +128,7 @@ func emitGeoDeleteKey(cmd *shared.Command, key string, tips ...[]effects.Tip) er
 func handleGeoAdd(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 4 {
 		w.WriteWrongNumArguments("geoadd")
+
 		return
 	}
 
@@ -137,6 +137,7 @@ func handleGeoAdd(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 
 	// Parse options
 	var nx, xx, ch bool
+
 	i := 1
 	for i < len(cmd.Args) {
 		opt := shared.ToUpper(cmd.Args[i])
@@ -159,6 +160,7 @@ parseMembers:
 	// Validate conflicting options
 	if nx && xx {
 		w.WriteError("ERR syntax error")
+
 		return
 	}
 
@@ -166,6 +168,7 @@ parseMembers:
 	remaining := cmd.Args[i:]
 	if len(remaining) < 3 || len(remaining)%3 != 0 {
 		w.WriteError("ERR syntax error")
+
 		return
 	}
 
@@ -174,22 +177,27 @@ parseMembers:
 		lon, lat float64
 		member   string
 	}
+
 	members := make([]geoMember, 0, len(remaining)/3)
 
 	for j := 0; j < len(remaining); j += 3 {
 		lon, err := strconv.ParseFloat(string(remaining[j]), 64)
 		if err != nil {
 			w.WriteError("ERR value is not a valid float")
+
 			return
 		}
+
 		lat, err := strconv.ParseFloat(string(remaining[j+1]), 64)
 		if err != nil {
 			w.WriteError("ERR value is not a valid float")
+
 			return
 		}
 
 		if !validateCoordinates(lon, lat) {
 			w.WriteError("ERR invalid longitude,latitude pair")
+
 			return
 		}
 
@@ -202,22 +210,27 @@ parseMembers:
 
 	valid = true
 	runner = func() {
-		snap, _, exists, wrongType, err := getGeoSnapshot(cmd, key)
+		snap, exists, wrongType, err := getGeoSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !exists && xx {
 			w.WriteInteger(0)
+
 			return
 		}
 
 		var addedCount, changedCount int
+
 		for _, m := range members {
 			hash := geoHashEncode(m.lon, m.lat)
 			score := float64(hash)
@@ -226,6 +239,7 @@ parseMembers:
 			if nx && memberExists {
 				continue
 			}
+
 			if xx && !memberExists {
 				continue
 			}
@@ -240,6 +254,7 @@ parseMembers:
 
 			if err := emitGeoInsert(cmd, key, m.member, score); err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
 		}
@@ -247,6 +262,7 @@ parseMembers:
 		if !exists {
 			if err := emitGeoTypeTag(cmd, key); err != nil {
 				w.WriteError(err.Error())
+
 				return
 			}
 		}
@@ -257,6 +273,7 @@ parseMembers:
 			w.WriteInteger(int64(addedCount))
 		}
 	}
+
 	return
 }
 
@@ -265,6 +282,7 @@ parseMembers:
 func handleGeoPos(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 1 {
 		w.WriteWrongNumArguments("geopos")
+
 		return
 	}
 
@@ -273,39 +291,48 @@ func handleGeoPos(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 
 	valid = true
 	runner = func() {
-		snap, _, exists, wrongType, err := getGeoSnapshot(cmd, key)
+		snap, exists, wrongType, err := getGeoSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !exists {
 			w.WriteArray(len(cmd.Args) - 1)
+
 			for i := 1; i < len(cmd.Args); i++ {
 				w.WriteNullArray()
 			}
+
 			return
 		}
 
 		w.WriteArray(len(cmd.Args) - 1)
+
 		for i := 1; i < len(cmd.Args); i++ {
 			member := string(cmd.Args[i])
+
 			score, found := geoMemberScore(snap, member)
 			if !found {
 				w.WriteNullArray()
 			} else {
 				hash := uint64(score)
 				lon, lat := geoHashDecode(hash)
+
 				w.WriteArray(2)
 				w.WriteBulkStringStr(strconv.FormatFloat(lon, 'f', -1, 64))
 				w.WriteBulkStringStr(strconv.FormatFloat(lat, 'f', -1, 64))
 			}
 		}
 	}
+
 	return
 }
 
@@ -314,17 +341,20 @@ func handleGeoPos(cmd *shared.Command, w *shared.Writer, db *shared.Database) (v
 func handleGeoDist(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 3 || len(cmd.Args) > 4 {
 		w.WriteWrongNumArguments("geodist")
+
 		return
 	}
 
 	key := string(cmd.Args[0])
 	member1 := string(cmd.Args[1])
 	member2 := string(cmd.Args[2])
+
 	unit := "m"
 	if len(cmd.Args) == 4 {
 		unit = strings.ToLower(string(cmd.Args[3]))
 		if unit != "m" && unit != "km" && unit != "mi" && unit != "ft" {
 			w.WriteError("ERR unsupported unit provided. please use M, KM, FT, MI")
+
 			return
 		}
 	}
@@ -333,25 +363,31 @@ func handleGeoDist(cmd *shared.Command, w *shared.Writer, db *shared.Database) (
 
 	valid = true
 	runner = func() {
-		snap, _, exists, wrongType, err := getGeoSnapshot(cmd, key)
+		snap, exists, wrongType, err := getGeoSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !exists {
 			w.WriteNullBulkString()
+
 			return
 		}
 
 		score1, found1 := geoMemberScore(snap, member1)
+
 		score2, found2 := geoMemberScore(snap, member2)
 		if !found1 || !found2 {
 			w.WriteNullBulkString()
+
 			return
 		}
 
@@ -363,6 +399,7 @@ func handleGeoDist(cmd *shared.Command, w *shared.Writer, db *shared.Database) (
 
 		w.WriteBulkStringStr(strconv.FormatFloat(dist, 'f', 4, 64))
 	}
+
 	return
 }
 
@@ -371,6 +408,7 @@ func handleGeoDist(cmd *shared.Command, w *shared.Writer, db *shared.Database) (
 func handleGeoHash(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 1 {
 		w.WriteWrongNumArguments("geohash")
+
 		return
 	}
 
@@ -379,27 +417,34 @@ func handleGeoHash(cmd *shared.Command, w *shared.Writer, db *shared.Database) (
 
 	valid = true
 	runner = func() {
-		snap, _, exists, wrongType, err := getGeoSnapshot(cmd, key)
+		snap, exists, wrongType, err := getGeoSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		if !exists {
 			w.WriteArray(len(cmd.Args) - 1)
+
 			for i := 1; i < len(cmd.Args); i++ {
 				w.WriteNullBulkString()
 			}
+
 			return
 		}
 
 		w.WriteArray(len(cmd.Args) - 1)
+
 		for i := 1; i < len(cmd.Args); i++ {
 			member := string(cmd.Args[i])
+
 			score, found := geoMemberScore(snap, member)
 			if !found {
 				w.WriteNullBulkString()
@@ -412,5 +457,6 @@ func handleGeoHash(cmd *shared.Command, w *shared.Writer, db *shared.Database) (
 			}
 		}
 	}
+
 	return
 }

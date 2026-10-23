@@ -49,6 +49,7 @@ func newRedisClient(t *testing.T, addr string) *redisClient {
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
+
 	return &redisClient{
 		conn:   conn,
 		reader: bufio.NewReader(conn),
@@ -57,16 +58,19 @@ func newRedisClient(t *testing.T, addr string) *redisClient {
 }
 
 func (c *redisClient) close() {
-	c.conn.Close()
+	// Test teardown: the connection will not be used again.
+	_ = c.conn.Close()
 }
 
 // sendCommand sends a RESP array command
 func (c *redisClient) sendCommand(args ...string) {
 	var cmd strings.Builder
-	cmd.WriteString(fmt.Sprintf("*%d\r\n", len(args)))
+	fmt.Fprintf(&cmd, "*%d\r\n", len(args))
+
 	for _, arg := range args {
-		cmd.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(arg), arg))
+		fmt.Fprintf(&cmd, "$%d\r\n%s\r\n", len(arg), arg)
 	}
+
 	_, err := c.conn.Write([]byte(cmd.String()))
 	if err != nil {
 		c.t.Fatalf("failed to send command: %v", err)
@@ -87,6 +91,7 @@ func (c *redisClient) readLine() string {
 	if err != nil {
 		c.t.Fatalf("failed to read line: %v", err)
 	}
+
 	return strings.TrimSuffix(line, "\r\n")
 }
 
@@ -109,55 +114,67 @@ func (c *redisClient) readReply() string {
 		if err != nil {
 			c.t.Fatalf("invalid bulk string length: %v", err)
 		}
+
 		if length == -1 {
 			return "(nil)"
 		}
 		// Read the data + CRLF
 		data := make([]byte, length+2)
+
 		_, err = io.ReadFull(c.reader, data)
 		if err != nil {
 			c.t.Fatalf("failed to read bulk string: %v", err)
 		}
+
 		return string(data[:length])
 	case '*': // Array
 		count, err := strconv.Atoi(line[1:])
 		if err != nil {
 			c.t.Fatalf("invalid array count: %v", err)
 		}
+
 		if count == -1 {
 			return "(nil)"
 		}
+
 		var parts []string
 		for range count {
 			parts = append(parts, c.readReply())
 		}
+
 		return strings.Join(parts, ",")
 	case '%': // RESP3 Map
 		count, err := strconv.Atoi(line[1:])
 		if err != nil {
 			c.t.Fatalf("invalid map count: %v", err)
 		}
+
 		var parts []string
+
 		for range count {
 			key := c.readReply()
 			val := c.readReply()
 			parts = append(parts, key+"="+val)
 		}
+
 		return "map{" + strings.Join(parts, ",") + "}"
 	case '~': // RESP3 Set
 		count, err := strconv.Atoi(line[1:])
 		if err != nil {
 			c.t.Fatalf("invalid set count: %v", err)
 		}
+
 		var parts []string
 		for range count {
 			parts = append(parts, c.readReply())
 		}
+
 		return "set{" + strings.Join(parts, ",") + "}"
 	case '#': // RESP3 Boolean
 		if line[1] == 't' {
 			return "true"
 		}
+
 		return "false"
 	case ',': // RESP3 Double
 		return line[1:]
@@ -168,14 +185,18 @@ func (c *redisClient) readReply() string {
 		if err != nil {
 			c.t.Fatalf("invalid blob error length: %v", err)
 		}
+
 		data := make([]byte, length+2)
+
 		_, err = io.ReadFull(c.reader, data)
 		if err != nil {
 			c.t.Fatalf("failed to read blob error: %v", err)
 		}
+
 		return "-" + string(data[:length])
 	default:
 		c.t.Fatalf("unknown reply type: %c in %q", line[0], line)
+
 		return ""
 	}
 }
@@ -186,10 +207,12 @@ func (c *redisClient) readIntReply() int64 {
 	if len(line) == 0 || line[0] != ':' {
 		c.t.Fatalf("expected integer reply, got %q", line)
 	}
+
 	val, err := strconv.ParseInt(line[1:], 10, 64)
 	if err != nil {
 		c.t.Fatalf("invalid integer: %v", err)
 	}
+
 	return val
 }
 
@@ -197,229 +220,267 @@ func (c *redisClient) readIntReply() int64 {
 
 func (c *redisClient) ping() string {
 	c.sendCommand("PING")
+
 	return c.readReply()
 }
 
 func (c *redisClient) set(key, value string) string {
 	c.sendCommand("SET", key, value)
+
 	return c.readReply()
 }
 
 func (c *redisClient) setEx(key string, seconds int, value string) string {
 	c.sendCommand("SET", key, value, "EX", strconv.Itoa(seconds))
+
 	return c.readReply()
 }
 
 func (c *redisClient) setPx(key string, milliseconds int, value string) string {
 	c.sendCommand("SET", key, value, "PX", strconv.Itoa(milliseconds))
+
 	return c.readReply()
 }
 
 func (c *redisClient) setNX(key, value string) string {
 	c.sendCommand("SETNX", key, value)
+
 	return c.readReply()
 }
 
 func (c *redisClient) get(key string) string {
 	c.sendCommand("GET", key)
+
 	return c.readReply()
 }
 
 func (c *redisClient) del(keys ...string) int64 {
 	args := append([]string{"DEL"}, keys...)
 	c.sendCommand(args...)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) exists(keys ...string) int64 {
 	args := append([]string{"EXISTS"}, keys...)
 	c.sendCommand(args...)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) incr(key string) string {
 	c.sendCommand("INCR", key)
+
 	return c.readReply()
 }
 
 func (c *redisClient) incrBy(key string, delta int64) string {
 	c.sendCommand("INCRBY", key, strconv.FormatInt(delta, 10))
+
 	return c.readReply()
 }
 
 func (c *redisClient) decr(key string) string {
 	c.sendCommand("DECR", key)
+
 	return c.readReply()
 }
 
 func (c *redisClient) decrBy(key string, delta int64) string {
 	c.sendCommand("DECRBY", key, strconv.FormatInt(delta, 10))
+
 	return c.readReply()
 }
 
 func (c *redisClient) expire(key string, seconds int) int64 {
 	c.sendCommand("EXPIRE", key, strconv.Itoa(seconds))
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) ttl(key string) int64 {
 	c.sendCommand("TTL", key)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) pttl(key string) int64 {
 	c.sendCommand("PTTL", key)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) persist(key string) int64 {
 	c.sendCommand("PERSIST", key)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) appendCmd(key, value string) int64 {
 	c.sendCommand("APPEND", key, value)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) strlen(key string) int64 {
 	c.sendCommand("STRLEN", key)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) mget(keys ...string) string {
 	args := append([]string{"MGET"}, keys...)
 	c.sendCommand(args...)
+
 	return c.readReply()
 }
 
 func (c *redisClient) mset(kvs ...string) string {
 	args := append([]string{"MSET"}, kvs...)
 	c.sendCommand(args...)
+
 	return c.readReply()
 }
 
 func (c *redisClient) lpush(key string, values ...string) int64 {
 	args := append([]string{"LPUSH", key}, values...)
 	c.sendCommand(args...)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) rpush(key string, values ...string) int64 {
 	args := append([]string{"RPUSH", key}, values...)
 	c.sendCommand(args...)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) lpop(key string) string {
 	c.sendCommand("LPOP", key)
+
 	return c.readReply()
 }
 
 func (c *redisClient) rpop(key string) string {
 	c.sendCommand("RPOP", key)
+
 	return c.readReply()
 }
 
 func (c *redisClient) llen(key string) int64 {
 	c.sendCommand("LLEN", key)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) lrange(key string, start, stop int) string {
 	c.sendCommand("LRANGE", key, strconv.Itoa(start), strconv.Itoa(stop))
+
 	return c.readReply()
 }
 
 func (c *redisClient) lindex(key string, index int) string {
 	c.sendCommand("LINDEX", key, strconv.Itoa(index))
+
 	return c.readReply()
 }
 
 func (c *redisClient) hset(key string, fieldValues ...string) int64 {
 	args := append([]string{"HSET", key}, fieldValues...)
 	c.sendCommand(args...)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) hget(key, field string) string {
 	c.sendCommand("HGET", key, field)
+
 	return c.readReply()
 }
 
 func (c *redisClient) hdel(key string, fields ...string) int64 {
 	args := append([]string{"HDEL", key}, fields...)
 	c.sendCommand(args...)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) hexists(key, field string) int64 {
 	c.sendCommand("HEXISTS", key, field)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) hlen(key string) int64 {
 	c.sendCommand("HLEN", key)
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) hgetall(key string) string {
 	c.sendCommand("HGETALL", key)
+
 	return c.readReply()
 }
 
 func (c *redisClient) hkeys(key string) string {
 	c.sendCommand("HKEYS", key)
+
 	return c.readReply()
 }
 
 func (c *redisClient) hvals(key string) string {
 	c.sendCommand("HVALS", key)
+
 	return c.readReply()
 }
 
 func (c *redisClient) hincrby(key, field string, delta int64) string {
 	c.sendCommand("HINCRBY", key, field, strconv.FormatInt(delta, 10))
+
 	return c.readReply()
 }
 
 func (c *redisClient) flushdb() string {
 	c.sendCommand("FLUSHDB")
+
 	return c.readReply()
 }
 
 func (c *redisClient) flushall() string {
 	c.sendCommand("FLUSHALL")
+
 	return c.readReply()
 }
 
 func (c *redisClient) dbsize() int64 {
 	c.sendCommand("DBSIZE")
+
 	return c.readIntReply()
 }
 
 func (c *redisClient) selectDB(index int) string {
 	c.sendCommand("SELECT", strconv.Itoa(index))
+
 	return c.readReply()
 }
 
 func (c *redisClient) swapDB(db1, db2 int) string {
 	c.sendCommand("SWAPDB", strconv.Itoa(db1), strconv.Itoa(db2))
+
 	return c.readReply()
 }
 
 func (c *redisClient) keys(pattern string) string {
 	c.sendCommand("KEYS", pattern)
+
 	return c.readReply()
 }
 
 func (c *redisClient) typeCmd(key string) string {
 	c.sendCommand("TYPE", key)
-	return c.readReply()
-}
 
-func (c *redisClient) psetex(key string, milliseconds int, value string) string {
-	c.sendCommand("PSETEX", key, strconv.Itoa(milliseconds), value)
 	return c.readReply()
 }
 
@@ -428,14 +489,17 @@ func sortCSV(s string) string {
 	if s == "" {
 		return s
 	}
+
 	parts := strings.Split(s, ",")
 	sort.Strings(parts)
+
 	return strings.Join(parts, ",")
 }
 
 // startRedisTestServer starts a Redis server and returns its address
 func startRedisTestServer(t *testing.T) (addr string, cleanup func()) {
 	t.Helper()
+
 	cfg := ServerConfig{
 		Address: "127.0.0.1:0",
 	}
@@ -459,12 +523,17 @@ func startRedisTestServer(t *testing.T) (addr string, cleanup func()) {
 		t.Fatalf("failed to start server: %v", err)
 	}
 
-	return server.Addr().String(), func() { server.Stop() }
+	return server.Addr().String(), func() {
+		if err := server.Stop(); err != nil {
+			t.Errorf("stop Redis test server: %v", err)
+		}
+	}
 }
 
 // startRedisTestServerWithEffects starts a test server with a standalone effects engine.
 func startRedisTestServerWithEffects(t *testing.T) (addr string, cleanup func()) {
 	t.Helper()
+
 	eng := effects.NewTestEngine()
 
 	cfg := ServerConfig{
@@ -496,7 +565,11 @@ func startRedisTestServerWithEffects(t *testing.T) (addr string, cleanup func())
 		t.Fatalf("failed to start server: %v", err)
 	}
 
-	return server.Addr().String(), func() { server.Stop() }
+	return server.Addr().String(), func() {
+		if err := server.Stop(); err != nil {
+			t.Errorf("stop Redis test server: %v", err)
+		}
+	}
 }
 
 // =============================================================================
@@ -526,6 +599,7 @@ func TestCorrectness_PingWithArg(t *testing.T) {
 		defer c.close()
 
 		c.sendCommand("PING", "hello")
+
 		resp := c.readReply()
 		if resp != "hello" {
 			t.Errorf("expected hello, got %q", resp)
@@ -542,6 +616,7 @@ func TestCorrectness_Echo(t *testing.T) {
 		defer c.close()
 
 		c.sendCommand("ECHO", "Hello World")
+
 		resp := c.readReply()
 		if resp != "Hello World" {
 			t.Errorf("expected 'Hello World', got %q", resp)
@@ -563,6 +638,7 @@ func TestCorrectness_Select(t *testing.T) {
 		}
 
 		c.set("db0key", "value0")
+
 		if val := c.get("db0key"); val != "value0" {
 			t.Errorf("expected value0, got %q", val)
 		}
@@ -572,6 +648,7 @@ func TestCorrectness_Select(t *testing.T) {
 		}
 
 		c.sendCommand("SELECT", "999")
+
 		resp := c.readReply()
 		if !strings.HasPrefix(resp, "-ERR") {
 			t.Errorf("expected error for invalid DB, got %q", resp)
@@ -588,21 +665,27 @@ func TestCorrectness_Quit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to connect: %v", err)
 		}
-		defer conn.Close()
+		defer func() {
+			// Test teardown: the connection will not be used again.
+			_ = conn.Close()
+		}()
 
-		fmt.Fprint(conn, "*1\r\n$4\r\nQUIT\r\n")
+		if _, err := fmt.Fprint(conn, "*1\r\n$4\r\nQUIT\r\n"); err != nil {
+			t.Fatal(err)
+		}
 
-		// Connection should be closed
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		buf := make([]byte, 1)
-		n, _ := conn.Read(buf)
-		if n > 0 {
-			// May get +OK before close, try again
-			conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-			n, err = conn.Read(buf)
-			if n != 0 || err == nil {
-				t.Error("connection should be closed after quit")
-			}
+		if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+
+		// Read through the optional +OK reply and require EOF, not a timeout.
+		response, err := io.ReadAll(conn)
+		if err != nil {
+			t.Fatalf("connection should close after QUIT: %v", err)
+		}
+
+		if len(response) != 0 && string(response) != "+OK\r\n" {
+			t.Errorf("unexpected QUIT response: %q", response)
 		}
 	}
 }
@@ -617,6 +700,7 @@ func TestCorrectness_InlineCommand(t *testing.T) {
 
 		// Send inline PING
 		c.sendInline("PING")
+
 		resp := c.readReply()
 		if resp != "PONG" {
 			t.Errorf("expected PONG for inline, got %q", resp)
@@ -624,6 +708,7 @@ func TestCorrectness_InlineCommand(t *testing.T) {
 
 		// Inline SET
 		c.sendInline("SET foo bar")
+
 		resp = c.readReply()
 		if resp != "OK" {
 			t.Errorf("expected OK for inline SET, got %q", resp)
@@ -631,6 +716,7 @@ func TestCorrectness_InlineCommand(t *testing.T) {
 
 		// Inline GET
 		c.sendInline("GET foo")
+
 		resp = c.readReply()
 		if resp != "bar" {
 			t.Errorf("expected bar for inline GET, got %q", resp)
@@ -654,6 +740,7 @@ func TestCorrectness_SetGet_Basic(t *testing.T) {
 		if resp := c.set("foo", "bar"); resp != "OK" {
 			t.Errorf("expected OK, got %q", resp)
 		}
+
 		if val := c.get("foo"); val != "bar" {
 			t.Errorf("expected bar, got %q", val)
 		}
@@ -665,6 +752,7 @@ func TestCorrectness_SetGet_Basic(t *testing.T) {
 
 		// Overwrite
 		c.set("foo", "baz")
+
 		if val := c.get("foo"); val != "baz" {
 			t.Errorf("expected baz after overwrite, got %q", val)
 		}
@@ -706,12 +794,14 @@ func TestCorrectness_SetWithNX(t *testing.T) {
 
 		// SET with NX on new key
 		c.sendCommand("SET", "nxtest", "value1", "NX")
+
 		if resp := c.readReply(); resp != "OK" {
 			t.Errorf("expected OK, got %q", resp)
 		}
 
 		// SET with NX on existing key
 		c.sendCommand("SET", "nxtest", "value2", "NX")
+
 		if resp := c.readReply(); resp != "(nil)" {
 			t.Errorf("expected (nil), got %q", resp)
 		}
@@ -728,6 +818,7 @@ func TestCorrectness_SetWithXX(t *testing.T) {
 
 		// SET with XX on non-existent key
 		c.sendCommand("SET", "xxtest", "value1", "XX")
+
 		if resp := c.readReply(); resp != "(nil)" {
 			t.Errorf("expected (nil), got %q", resp)
 		}
@@ -737,6 +828,7 @@ func TestCorrectness_SetWithXX(t *testing.T) {
 
 		// SET with XX on existing key
 		c.sendCommand("SET", "xxtest", "updated", "XX")
+
 		if resp := c.readReply(); resp != "OK" {
 			t.Errorf("expected OK, got %q", resp)
 		}
@@ -799,12 +891,14 @@ func TestCorrectness_GetSet(t *testing.T) {
 
 		// GETSET on new key
 		c.sendCommand("GETSET", "gskey", "value1")
+
 		if resp := c.readReply(); resp != "(nil)" {
 			t.Errorf("expected (nil) for new key, got %q", resp)
 		}
 
 		// GETSET on existing key
 		c.sendCommand("GETSET", "gskey", "value2")
+
 		if resp := c.readReply(); resp != "value1" {
 			t.Errorf("expected value1, got %q", resp)
 		}
@@ -828,6 +922,7 @@ func TestCorrectness_GetDel(t *testing.T) {
 
 		// GETDEL
 		c.sendCommand("GETDEL", "gdkey")
+
 		if resp := c.readReply(); resp != "value" {
 			t.Errorf("expected value, got %q", resp)
 		}
@@ -839,6 +934,7 @@ func TestCorrectness_GetDel(t *testing.T) {
 
 		// GETDEL on non-existent
 		c.sendCommand("GETDEL", "nonexistent")
+
 		if resp := c.readReply(); resp != "(nil)" {
 			t.Errorf("expected (nil), got %q", resp)
 		}
@@ -867,6 +963,7 @@ func TestCorrectness_Del(t *testing.T) {
 		if c.exists("del1") != 0 {
 			t.Error("del1 should not exist")
 		}
+
 		if c.exists("del3") != 1 {
 			t.Error("del3 should still exist")
 		}
@@ -888,6 +985,7 @@ func TestCorrectness_Exists(t *testing.T) {
 		if c.exists("e1") != 1 {
 			t.Error("e1 should exist")
 		}
+
 		if c.exists("nonexistent") != 0 {
 			t.Error("nonexistent should not exist")
 		}
@@ -914,12 +1012,15 @@ func TestCorrectness_Type(t *testing.T) {
 		if typ := c.typeCmd("strkey"); typ != "string" {
 			t.Errorf("expected string, got %q", typ)
 		}
+
 		if typ := c.typeCmd("listkey"); typ != "list" {
 			t.Errorf("expected list, got %q", typ)
 		}
+
 		if typ := c.typeCmd("hashkey"); typ != "hash" {
 			t.Errorf("expected hash, got %q", typ)
 		}
+
 		if typ := c.typeCmd("nonexistent"); typ != "none" {
 			t.Errorf("expected none, got %q", typ)
 		}
@@ -1119,11 +1220,13 @@ func TestCorrectness_GetRange(t *testing.T) {
 		c.set("rangekey", "Hello World")
 
 		c.sendCommand("GETRANGE", "rangekey", "0", "4")
+
 		if resp := c.readReply(); resp != "Hello" {
 			t.Errorf("expected Hello, got %q", resp)
 		}
 
 		c.sendCommand("GETRANGE", "rangekey", "-5", "-1")
+
 		if resp := c.readReply(); resp != "World" {
 			t.Errorf("expected World, got %q", resp)
 		}
@@ -1141,6 +1244,7 @@ func TestCorrectness_SetRange(t *testing.T) {
 		c.set("srkey", "Hello World")
 
 		c.sendCommand("SETRANGE", "srkey", "6", "Redis")
+
 		resp := c.readReply()
 		if resp != "11" {
 			t.Errorf("expected 11, got %q", resp)
@@ -1164,18 +1268,21 @@ func TestCorrectness_Substr(t *testing.T) {
 
 		// Positive indices
 		c.sendCommand("SUBSTR", "mykey", "0", "4")
+
 		if resp := c.readReply(); resp != "Hello" {
 			t.Errorf("expected Hello, got %q", resp)
 		}
 
 		// Negative indices
 		c.sendCommand("SUBSTR", "mykey", "-5", "-1")
+
 		if resp := c.readReply(); resp != "World" {
 			t.Errorf("expected World, got %q", resp)
 		}
 
 		// Non-existent key
 		c.sendCommand("SUBSTR", "nonexistent", "0", "5")
+
 		if resp := c.readReply(); resp != "" {
 			t.Errorf("expected empty string, got %q", resp)
 		}
@@ -1196,29 +1303,34 @@ func TestCorrectness_Lcs(t *testing.T) {
 
 		// Basic LCS
 		c.sendCommand("LCS", "key1", "key2")
+
 		if resp := c.readReply(); resp != "mytext" {
 			t.Errorf("expected mytext, got %q", resp)
 		}
 
 		// LCS LEN
 		c.sendCommand("LCS", "key1", "key2", "LEN")
+
 		if resp := c.readIntReply(); resp != 6 {
 			t.Errorf("expected 6, got %d", resp)
 		}
 
 		// Non-existent keys
 		c.sendCommand("LCS", "nonexistent1", "nonexistent2")
+
 		if resp := c.readReply(); resp != "" {
 			t.Errorf("expected empty, got %q", resp)
 		}
 
 		c.sendCommand("LCS", "nonexistent1", "nonexistent2", "LEN")
+
 		if resp := c.readIntReply(); resp != 0 {
 			t.Errorf("expected 0, got %d", resp)
 		}
 
 		// One key exists, one doesn't
 		c.sendCommand("LCS", "key1", "nonexistent", "LEN")
+
 		if resp := c.readIntReply(); resp != 0 {
 			t.Errorf("expected 0, got %d", resp)
 		}
@@ -1227,6 +1339,7 @@ func TestCorrectness_Lcs(t *testing.T) {
 		c.set("same1", "hello")
 		c.set("same2", "hello")
 		c.sendCommand("LCS", "same1", "same2")
+
 		if resp := c.readReply(); resp != "hello" {
 			t.Errorf("expected hello, got %q", resp)
 		}
@@ -1235,6 +1348,7 @@ func TestCorrectness_Lcs(t *testing.T) {
 		c.set("abc", "abc")
 		c.set("xyz", "xyz")
 		c.sendCommand("LCS", "abc", "xyz")
+
 		if resp := c.readReply(); resp != "" {
 			t.Errorf("expected empty, got %q", resp)
 		}
@@ -1262,6 +1376,7 @@ func TestCorrectness_Lcs_Idx(t *testing.T) {
 
 		// IDX with MINMATCHLEN - filter out short matches
 		c.sendCommand("LCS", "key1", "key2", "IDX", "MINMATCHLEN", "4")
+
 		resp = c.readReply()
 		if resp == "" {
 			t.Error("expected non-empty IDX response with MINMATCHLEN")
@@ -1269,6 +1384,7 @@ func TestCorrectness_Lcs_Idx(t *testing.T) {
 
 		// IDX with WITHMATCHLEN
 		c.sendCommand("LCS", "key1", "key2", "IDX", "WITHMATCHLEN")
+
 		resp = c.readReply()
 		if resp == "" {
 			t.Error("expected non-empty IDX response with WITHMATCHLEN")
@@ -1331,12 +1447,14 @@ func TestCorrectness_TTL(t *testing.T) {
 
 		// Key without TTL
 		c.set("noxpkey", "value")
+
 		if ttl := c.ttl("noxpkey"); ttl != -1 {
 			t.Errorf("expected -1 for no expiry, got %d", ttl)
 		}
 
 		// Key with TTL
 		c.expire("noxpkey", 100)
+
 		ttl := c.ttl("noxpkey")
 		if ttl <= 0 || ttl > 100 {
 			t.Errorf("expected TTL between 1 and 100, got %d", ttl)
@@ -1385,6 +1503,7 @@ func TestCorrectness_ExpireAt(t *testing.T) {
 		// Set to expire 1 hour from now
 		futureTime := time.Now().Unix() + 3600
 		c.sendCommand("EXPIREAT", "expat", strconv.FormatInt(futureTime, 10))
+
 		if resp := c.readReply(); resp != "1" {
 			t.Errorf("expected 1, got %q", resp)
 		}
@@ -1432,8 +1551,10 @@ func TestCorrectness_FiveKeysInFiveKeysOut(t *testing.T) {
 			if !expectedKeys[k] {
 				t.Errorf("unexpected key: %q (keys: %q)", k, keysResult)
 			}
+
 			delete(expectedKeys, k)
 		}
+
 		if len(expectedKeys) > 0 {
 			t.Errorf("missing keys: %v", expectedKeys)
 		}
@@ -1473,6 +1594,7 @@ func TestCorrectness_LPushRPush(t *testing.T) {
 		if val := c.lindex("mylist", 0); val != "z" {
 			t.Errorf("expected z at index 0, got %q", val)
 		}
+
 		if val := c.lindex("mylist", 3); val != "a" {
 			t.Errorf("expected a at index 3, got %q", val)
 		}
@@ -1488,6 +1610,7 @@ func TestCorrectness_LPopRPop(t *testing.T) {
 		defer c.close()
 
 		c.rpush("poplist", "a", "b", "c", "d")
+		c.rpush("otherlist", "untouched")
 
 		// LPOP
 		if val := c.lpop("poplist"); val != "a" {
@@ -1507,8 +1630,13 @@ func TestCorrectness_LPopRPop(t *testing.T) {
 		// Pop from empty list
 		c.lpop("poplist")
 		c.lpop("poplist")
+
 		if val := c.lpop("poplist"); val != "(nil)" {
 			t.Errorf("expected (nil) from empty list, got %q", val)
+		}
+
+		if val := c.lpop("otherlist"); val != "untouched" {
+			t.Errorf("expected other list to remain untouched, got %q", val)
 		}
 	}
 }
@@ -1527,6 +1655,7 @@ func TestCorrectness_LLen(t *testing.T) {
 		}
 
 		c.rpush("lenlist", "a", "b", "c")
+
 		if length := c.llen("lenlist"); length != 3 {
 			t.Errorf("expected 3, got %d", length)
 		}
@@ -1578,9 +1707,11 @@ func TestCorrectness_LIndex(t *testing.T) {
 		if val := c.lindex("idxlist", 0); val != "a" {
 			t.Errorf("expected a, got %q", val)
 		}
+
 		if val := c.lindex("idxlist", -1); val != "c" {
 			t.Errorf("expected c, got %q", val)
 		}
+
 		if val := c.lindex("idxlist", 10); val != "(nil)" {
 			t.Errorf("expected (nil), got %q", val)
 		}
@@ -1598,6 +1729,7 @@ func TestCorrectness_LSet(t *testing.T) {
 		c.rpush("setlist", "a", "b", "c")
 
 		c.sendCommand("LSET", "setlist", "1", "B")
+
 		if resp := c.readReply(); resp != "OK" {
 			t.Errorf("expected OK, got %q", resp)
 		}
@@ -1608,6 +1740,7 @@ func TestCorrectness_LSet(t *testing.T) {
 
 		// Out of range
 		c.sendCommand("LSET", "setlist", "10", "X")
+
 		resp := c.readReply()
 		if !strings.HasPrefix(resp, "-ERR") {
 			t.Errorf("expected error for out of range, got %q", resp)
@@ -1626,6 +1759,7 @@ func TestCorrectness_LTrim(t *testing.T) {
 		c.rpush("trimlist", "a", "b", "c", "d", "e")
 
 		c.sendCommand("LTRIM", "trimlist", "1", "3")
+
 		if resp := c.readReply(); resp != "OK" {
 			t.Errorf("expected OK, got %q", resp)
 		}
@@ -1648,6 +1782,7 @@ func TestCorrectness_LRem(t *testing.T) {
 
 		// Remove first 2 occurrences of "a"
 		c.sendCommand("LREM", "remlist", "2", "a")
+
 		if resp := c.readReply(); resp != "2" {
 			t.Errorf("expected 2, got %q", resp)
 		}
@@ -1669,6 +1804,7 @@ func TestCorrectness_LPushX_RPushX(t *testing.T) {
 
 		// LPUSHX on non-existent list
 		c.sendCommand("LPUSHX", "nolist", "a")
+
 		if resp := c.readReply(); resp != "0" {
 			t.Errorf("expected 0, got %q", resp)
 		}
@@ -1678,12 +1814,14 @@ func TestCorrectness_LPushX_RPushX(t *testing.T) {
 
 		// LPUSHX on existing list
 		c.sendCommand("LPUSHX", "pushxlist", "b")
+
 		if resp := c.readReply(); resp != "2" {
 			t.Errorf("expected 2, got %q", resp)
 		}
 
 		// RPUSHX on existing list
 		c.sendCommand("RPUSHX", "pushxlist", "c")
+
 		if resp := c.readReply(); resp != "3" {
 			t.Errorf("expected 3, got %q", resp)
 		}
@@ -1764,6 +1902,7 @@ func TestCorrectness_HDel(t *testing.T) {
 		if c.hexists("delhash", "f1") != 0 {
 			t.Error("f1 should be deleted")
 		}
+
 		if c.hexists("delhash", "f2") != 1 {
 			t.Error("f2 should exist")
 		}
@@ -1783,9 +1922,11 @@ func TestCorrectness_HExists(t *testing.T) {
 		if c.hexists("exhash", "field") != 1 {
 			t.Error("field should exist")
 		}
+
 		if c.hexists("exhash", "nofield") != 0 {
 			t.Error("nofield should not exist")
 		}
+
 		if c.hexists("nohash", "field") != 0 {
 			t.Error("nohash should not exist")
 		}
@@ -1805,6 +1946,7 @@ func TestCorrectness_HLen(t *testing.T) {
 		}
 
 		c.hset("lenhash", "f1", "v1", "f2", "v2", "f3", "v3")
+
 		if c.hlen("lenhash") != 3 {
 			t.Error("expected 3 fields")
 		}
@@ -1875,6 +2017,7 @@ func TestCorrectness_HMGet(t *testing.T) {
 		c.hset("mgethash", "f1", "v1", "f2", "v2", "f3", "v3")
 
 		c.sendCommand("HMGET", "mgethash", "f1", "nofield", "f3")
+
 		resp := c.readReply()
 		if resp != "v1,(nil),v3" {
 			t.Errorf("expected 'v1,(nil),v3', got %q", resp)
@@ -1917,12 +2060,14 @@ func TestCorrectness_HSetNX(t *testing.T) {
 
 		// New field
 		c.sendCommand("HSETNX", "nxhash", "field", "value1")
+
 		if resp := c.readReply(); resp != "1" {
 			t.Errorf("expected 1, got %q", resp)
 		}
 
 		// Existing field
 		c.sendCommand("HSETNX", "nxhash", "field", "value2")
+
 		if resp := c.readReply(); resp != "0" {
 			t.Errorf("expected 0, got %q", resp)
 		}
@@ -1948,24 +2093,28 @@ func TestCorrectness_SAddSCard(t *testing.T) {
 
 		// SADD new members
 		c.sendCommand("SADD", "myset", "a", "b", "c")
+
 		if resp := c.readReply(); resp != "3" {
 			t.Errorf("expected 3 added, got %q", resp)
 		}
 
 		// SADD duplicate members
 		c.sendCommand("SADD", "myset", "a", "d")
+
 		if resp := c.readReply(); resp != "1" {
 			t.Errorf("expected 1 added (d only), got %q", resp)
 		}
 
 		// SCARD
 		c.sendCommand("SCARD", "myset")
+
 		if resp := c.readReply(); resp != "4" {
 			t.Errorf("expected 4 members, got %q", resp)
 		}
 
 		// SCARD on non-existent key
 		c.sendCommand("SCARD", "noset")
+
 		if resp := c.readReply(); resp != "0" {
 			t.Errorf("expected 0 for non-existent set, got %q", resp)
 		}
@@ -1985,18 +2134,21 @@ func TestCorrectness_SIsMember(t *testing.T) {
 
 		// Check existing member
 		c.sendCommand("SISMEMBER", "myset", "a")
+
 		if resp := c.readReply(); resp != "1" {
 			t.Errorf("expected 1 for existing member, got %q", resp)
 		}
 
 		// Check non-existing member
 		c.sendCommand("SISMEMBER", "myset", "z")
+
 		if resp := c.readReply(); resp != "0" {
 			t.Errorf("expected 0 for non-existing member, got %q", resp)
 		}
 
 		// Check on non-existent set
 		c.sendCommand("SISMEMBER", "noset", "a")
+
 		if resp := c.readReply(); resp != "0" {
 			t.Errorf("expected 0 for non-existent set, got %q", resp)
 		}
@@ -2016,6 +2168,7 @@ func TestCorrectness_SMembers(t *testing.T) {
 
 		// SMEMBERS returns all members (order may vary)
 		c.sendCommand("SMEMBERS", "myset")
+
 		resp := c.readReply()
 		if sortCSV(resp) != "a,b,c" {
 			t.Errorf("expected a,b,c, got %q", resp)
@@ -2023,6 +2176,7 @@ func TestCorrectness_SMembers(t *testing.T) {
 
 		// SMEMBERS on non-existent set returns empty array (empty string after join)
 		c.sendCommand("SMEMBERS", "noset")
+
 		if resp := c.readReply(); resp != "" {
 			t.Errorf("expected empty string for empty set, got %q", resp)
 		}
@@ -2042,24 +2196,28 @@ func TestCorrectness_SRem(t *testing.T) {
 
 		// Remove existing members
 		c.sendCommand("SREM", "myset", "a", "c")
+
 		if resp := c.readReply(); resp != "2" {
 			t.Errorf("expected 2 removed, got %q", resp)
 		}
 
 		// Verify removed
 		c.sendCommand("SISMEMBER", "myset", "a")
+
 		if resp := c.readReply(); resp != "0" {
 			t.Errorf("expected 0, a should be removed, got %q", resp)
 		}
 
 		// Remove non-existing member
 		c.sendCommand("SREM", "myset", "z")
+
 		if resp := c.readReply(); resp != "0" {
 			t.Errorf("expected 0, z not in set, got %q", resp)
 		}
 
 		// Remove from non-existent set
 		c.sendCommand("SREM", "noset", "a")
+
 		if resp := c.readReply(); resp != "0" {
 			t.Errorf("expected 0 for non-existent set, got %q", resp)
 		}
@@ -2079,6 +2237,7 @@ func TestCorrectness_SPop(t *testing.T) {
 
 		// SPOP returns a member and removes it
 		c.sendCommand("SPOP", "myset")
+
 		resp := c.readReply()
 		if resp != "a" && resp != "b" && resp != "c" {
 			t.Errorf("expected a, b, or c, got %q", resp)
@@ -2086,12 +2245,14 @@ func TestCorrectness_SPop(t *testing.T) {
 
 		// Set should now have 2 members
 		c.sendCommand("SCARD", "myset")
+
 		if resp := c.readReply(); resp != "2" {
 			t.Errorf("expected 2 after pop, got %q", resp)
 		}
 
 		// SPOP from empty set
 		c.sendCommand("SPOP", "noset")
+
 		if resp := c.readReply(); resp != "(nil)" {
 			t.Errorf("expected (nil), got %q", resp)
 		}
@@ -2111,6 +2272,7 @@ func TestCorrectness_SetWrongType(t *testing.T) {
 
 		// Try set operation on string
 		c.sendCommand("SADD", "mystring", "member")
+
 		resp := c.readReply()
 		if !strings.Contains(resp, "WRONGTYPE") {
 			t.Errorf("expected WRONGTYPE error, got %q", resp)
@@ -2134,6 +2296,7 @@ func TestCorrectness_SInter(t *testing.T) {
 
 		// SINTER returns intersection
 		c.sendCommand("SINTER", "set1", "set2")
+
 		resp := c.readReply()
 		if sortCSV(resp) != "c,d" {
 			t.Errorf("expected c,d, got %q", resp)
@@ -2141,6 +2304,7 @@ func TestCorrectness_SInter(t *testing.T) {
 
 		// SINTER with non-existent set returns empty
 		c.sendCommand("SINTER", "set1", "noset")
+
 		resp = c.readReply()
 		if resp != "" {
 			t.Errorf("expected empty for intersection with non-existent set, got %q", resp)
@@ -2148,6 +2312,7 @@ func TestCorrectness_SInter(t *testing.T) {
 
 		// SINTER with single set returns all members
 		c.sendCommand("SINTER", "set1")
+
 		resp = c.readReply()
 		if sortCSV(resp) != "a,b,c,d" {
 			t.Errorf("expected a,b,c,d, got %q", resp)
@@ -2157,6 +2322,7 @@ func TestCorrectness_SInter(t *testing.T) {
 		c.sendCommand("SADD", "set3", "c", "g", "h")
 		c.readReply()
 		c.sendCommand("SINTER", "set1", "set2", "set3")
+
 		resp = c.readReply()
 		if resp != "c" {
 			t.Errorf("expected c, got %q", resp)
@@ -2180,6 +2346,7 @@ func TestCorrectness_SInterStore(t *testing.T) {
 
 		// SINTERSTORE stores intersection and returns cardinality
 		c.sendCommand("SINTERSTORE", "dest", "set1", "set2")
+
 		resp := c.readReply()
 		if resp != "2" {
 			t.Errorf("expected 2, got %q", resp)
@@ -2187,6 +2354,7 @@ func TestCorrectness_SInterStore(t *testing.T) {
 
 		// Verify destination set contents
 		c.sendCommand("SMEMBERS", "dest")
+
 		resp = c.readReply()
 		if sortCSV(resp) != "c,d" {
 			t.Errorf("expected c,d in dest, got %q", resp)
@@ -2194,12 +2362,14 @@ func TestCorrectness_SInterStore(t *testing.T) {
 
 		// SINTERSTORE with empty result deletes destination
 		c.sendCommand("SINTERSTORE", "dest2", "set1", "noset")
+
 		resp = c.readReply()
 		if resp != "0" {
 			t.Errorf("expected 0 for empty intersection, got %q", resp)
 		}
 
 		c.sendCommand("EXISTS", "dest2")
+
 		resp = c.readReply()
 		if resp != "0" {
 			t.Errorf("dest2 should not exist after empty intersection, got %q", resp)
@@ -2223,6 +2393,7 @@ func TestCorrectness_SInterCard(t *testing.T) {
 
 		// SINTERCARD returns cardinality of intersection
 		c.sendCommand("SINTERCARD", "2", "set1", "set2")
+
 		resp := c.readReply()
 		if resp != "3" {
 			t.Errorf("expected 3, got %q", resp)
@@ -2230,6 +2401,7 @@ func TestCorrectness_SInterCard(t *testing.T) {
 
 		// SINTERCARD with LIMIT
 		c.sendCommand("SINTERCARD", "2", "set1", "set2", "LIMIT", "2")
+
 		resp = c.readReply()
 		if resp != "2" {
 			t.Errorf("expected 2 with limit, got %q", resp)
@@ -2237,6 +2409,7 @@ func TestCorrectness_SInterCard(t *testing.T) {
 
 		// SINTERCARD with non-existent set
 		c.sendCommand("SINTERCARD", "2", "set1", "noset")
+
 		resp = c.readReply()
 		if resp != "0" {
 			t.Errorf("expected 0 for intersection with non-existent set, got %q", resp)
@@ -2260,6 +2433,7 @@ func TestCorrectness_SUnion(t *testing.T) {
 
 		// SUNION returns union
 		c.sendCommand("SUNION", "set1", "set2")
+
 		resp := c.readReply()
 		if sortCSV(resp) != "a,b,c,d,e" {
 			t.Errorf("expected a,b,c,d,e, got %q", resp)
@@ -2267,6 +2441,7 @@ func TestCorrectness_SUnion(t *testing.T) {
 
 		// SUNION with non-existent set returns existing set's members
 		c.sendCommand("SUNION", "set1", "noset")
+
 		resp = c.readReply()
 		if sortCSV(resp) != "a,b,c" {
 			t.Errorf("expected a,b,c, got %q", resp)
@@ -2274,6 +2449,7 @@ func TestCorrectness_SUnion(t *testing.T) {
 
 		// SUNION with only non-existent sets returns empty
 		c.sendCommand("SUNION", "noset1", "noset2")
+
 		resp = c.readReply()
 		if resp != "" {
 			t.Errorf("expected empty for union of non-existent sets, got %q", resp)
@@ -2297,6 +2473,7 @@ func TestCorrectness_SUnionStore(t *testing.T) {
 
 		// SUNIONSTORE stores union and returns cardinality
 		c.sendCommand("SUNIONSTORE", "dest", "set1", "set2")
+
 		resp := c.readReply()
 		if resp != "5" {
 			t.Errorf("expected 5, got %q", resp)
@@ -2304,6 +2481,7 @@ func TestCorrectness_SUnionStore(t *testing.T) {
 
 		// Verify destination set contents
 		c.sendCommand("SMEMBERS", "dest")
+
 		resp = c.readReply()
 		if sortCSV(resp) != "a,b,c,d,e" {
 			t.Errorf("expected a,b,c,d,e in dest, got %q", resp)
@@ -2311,6 +2489,7 @@ func TestCorrectness_SUnionStore(t *testing.T) {
 
 		// SUNIONSTORE with all non-existent sets
 		c.sendCommand("SUNIONSTORE", "dest2", "noset1", "noset2")
+
 		resp = c.readReply()
 		if resp != "0" {
 			t.Errorf("expected 0 for empty union, got %q", resp)
@@ -2334,6 +2513,7 @@ func TestCorrectness_SDiff(t *testing.T) {
 
 		// SDIFF returns elements in first set but not in others
 		c.sendCommand("SDIFF", "set1", "set2")
+
 		resp := c.readReply()
 		if sortCSV(resp) != "a,b" {
 			t.Errorf("expected a,b, got %q", resp)
@@ -2343,6 +2523,7 @@ func TestCorrectness_SDiff(t *testing.T) {
 		c.sendCommand("SADD", "set3", "a")
 		c.readReply()
 		c.sendCommand("SDIFF", "set1", "set2", "set3")
+
 		resp = c.readReply()
 		if resp != "b" {
 			t.Errorf("expected b, got %q", resp)
@@ -2350,6 +2531,7 @@ func TestCorrectness_SDiff(t *testing.T) {
 
 		// SDIFF with non-existent first set returns empty
 		c.sendCommand("SDIFF", "noset", "set1")
+
 		resp = c.readReply()
 		if resp != "" {
 			t.Errorf("expected empty for diff from non-existent set, got %q", resp)
@@ -2357,6 +2539,7 @@ func TestCorrectness_SDiff(t *testing.T) {
 
 		// SDIFF with non-existent other sets returns first set
 		c.sendCommand("SDIFF", "set1", "noset1", "noset2")
+
 		resp = c.readReply()
 		if sortCSV(resp) != "a,b,c,d" {
 			t.Errorf("expected a,b,c,d, got %q", resp)
@@ -2380,6 +2563,7 @@ func TestCorrectness_SDiffStore(t *testing.T) {
 
 		// SDIFFSTORE stores difference and returns cardinality
 		c.sendCommand("SDIFFSTORE", "dest", "set1", "set2")
+
 		resp := c.readReply()
 		if resp != "2" {
 			t.Errorf("expected 2, got %q", resp)
@@ -2387,6 +2571,7 @@ func TestCorrectness_SDiffStore(t *testing.T) {
 
 		// Verify destination set contents
 		c.sendCommand("SMEMBERS", "dest")
+
 		resp = c.readReply()
 		if sortCSV(resp) != "a,b" {
 			t.Errorf("expected a,b in dest, got %q", resp)
@@ -2394,6 +2579,7 @@ func TestCorrectness_SDiffStore(t *testing.T) {
 
 		// SDIFFSTORE with non-existent first set
 		c.sendCommand("SDIFFSTORE", "dest2", "noset", "set1")
+
 		resp = c.readReply()
 		if resp != "0" {
 			t.Errorf("expected 0 for diff from non-existent set, got %q", resp)
@@ -2417,6 +2603,7 @@ func TestCorrectness_SMove(t *testing.T) {
 
 		// SMOVE moves member from src to dst
 		c.sendCommand("SMOVE", "src", "dst", "a")
+
 		resp := c.readReply()
 		if resp != "1" {
 			t.Errorf("expected 1, got %q", resp)
@@ -2424,6 +2611,7 @@ func TestCorrectness_SMove(t *testing.T) {
 
 		// Verify a is no longer in src
 		c.sendCommand("SISMEMBER", "src", "a")
+
 		resp = c.readReply()
 		if resp != "0" {
 			t.Errorf("expected 0, a should be removed from src, got %q", resp)
@@ -2431,6 +2619,7 @@ func TestCorrectness_SMove(t *testing.T) {
 
 		// Verify a is now in dst
 		c.sendCommand("SISMEMBER", "dst", "a")
+
 		resp = c.readReply()
 		if resp != "1" {
 			t.Errorf("expected 1, a should be in dst, got %q", resp)
@@ -2438,6 +2627,7 @@ func TestCorrectness_SMove(t *testing.T) {
 
 		// SMOVE non-existent member returns 0
 		c.sendCommand("SMOVE", "src", "dst", "z")
+
 		resp = c.readReply()
 		if resp != "0" {
 			t.Errorf("expected 0 for non-existent member, got %q", resp)
@@ -2445,6 +2635,7 @@ func TestCorrectness_SMove(t *testing.T) {
 
 		// SMOVE from non-existent set returns 0
 		c.sendCommand("SMOVE", "noset", "dst", "a")
+
 		resp = c.readReply()
 		if resp != "0" {
 			t.Errorf("expected 0 for non-existent source set, got %q", resp)
@@ -2452,6 +2643,7 @@ func TestCorrectness_SMove(t *testing.T) {
 
 		// SMOVE to non-existent set creates it
 		c.sendCommand("SMOVE", "src", "newdst", "b")
+
 		resp = c.readReply()
 		if resp != "1" {
 			t.Errorf("expected 1, got %q", resp)
@@ -2459,6 +2651,7 @@ func TestCorrectness_SMove(t *testing.T) {
 
 		// Verify new set was created
 		c.sendCommand("SISMEMBER", "newdst", "b")
+
 		resp = c.readReply()
 		if resp != "1" {
 			t.Errorf("expected 1, b should be in newdst, got %q", resp)
@@ -2482,6 +2675,7 @@ func TestCorrectness_SMove_EmptySource(t *testing.T) {
 
 		// Move the only member
 		c.sendCommand("SMOVE", "src", "dst", "a")
+
 		resp := c.readReply()
 		if resp != "1" {
 			t.Errorf("expected 1, got %q", resp)
@@ -2489,6 +2683,7 @@ func TestCorrectness_SMove_EmptySource(t *testing.T) {
 
 		// Source set should be deleted (empty)
 		c.sendCommand("EXISTS", "src")
+
 		resp = c.readReply()
 		if resp != "0" {
 			t.Errorf("expected 0, empty source set should be deleted, got %q", resp)
@@ -2511,6 +2706,7 @@ func TestCorrectness_SetOperationsWrongType(t *testing.T) {
 
 		// SINTER with wrong type
 		c.sendCommand("SINTER", "myset", "mystring")
+
 		resp := c.readReply()
 		if !strings.Contains(resp, "WRONGTYPE") {
 			t.Errorf("expected WRONGTYPE error, got %q", resp)
@@ -2518,6 +2714,7 @@ func TestCorrectness_SetOperationsWrongType(t *testing.T) {
 
 		// SUNION with wrong type
 		c.sendCommand("SUNION", "mystring", "myset")
+
 		resp = c.readReply()
 		if !strings.Contains(resp, "WRONGTYPE") {
 			t.Errorf("expected WRONGTYPE error, got %q", resp)
@@ -2525,6 +2722,7 @@ func TestCorrectness_SetOperationsWrongType(t *testing.T) {
 
 		// SDIFF with wrong type (second key is string)
 		c.sendCommand("SDIFF", "myset", "mystring")
+
 		resp = c.readReply()
 		if !strings.Contains(resp, "WRONGTYPE") {
 			t.Errorf("expected WRONGTYPE error for SDIFF with second key wrong type, got %q", resp)
@@ -2532,6 +2730,7 @@ func TestCorrectness_SetOperationsWrongType(t *testing.T) {
 
 		// SDIFF with wrong type (first key is string)
 		c.sendCommand("SDIFF", "mystring", "myset")
+
 		resp = c.readReply()
 		if !strings.Contains(resp, "WRONGTYPE") {
 			t.Errorf("expected WRONGTYPE error for SDIFF with first key wrong type, got %q", resp)
@@ -2539,6 +2738,7 @@ func TestCorrectness_SetOperationsWrongType(t *testing.T) {
 
 		// SMOVE from wrong type
 		c.sendCommand("SMOVE", "mystring", "myset", "a")
+
 		resp = c.readReply()
 		if !strings.Contains(resp, "WRONGTYPE") {
 			t.Errorf("expected WRONGTYPE error, got %q", resp)
@@ -2546,6 +2746,7 @@ func TestCorrectness_SetOperationsWrongType(t *testing.T) {
 
 		// SMOVE to wrong type
 		c.sendCommand("SMOVE", "myset", "mystring", "a")
+
 		resp = c.readReply()
 		if !strings.Contains(resp, "WRONGTYPE") {
 			t.Errorf("expected WRONGTYPE error, got %q", resp)
@@ -2645,6 +2846,7 @@ func TestCorrectness_FlushDB_ThenReuse(t *testing.T) {
 
 	// Verify list length
 	c.sendCommand("LLEN", "mylist")
+
 	if resp := c.readIntReply(); resp != 3 {
 		t.Fatalf("expected 3 before flush, got %d", resp)
 	}
@@ -2668,6 +2870,7 @@ func TestCorrectness_FlushDB_ThenReuse(t *testing.T) {
 
 	// List should have exactly 2, not contaminated by pre-flush state
 	c.sendCommand("LLEN", "mylist")
+
 	if resp := c.readIntReply(); resp != 2 {
 		t.Fatalf("expected 2 after flush+reuse, got %d", resp)
 	}
@@ -2693,6 +2896,7 @@ func TestCorrectness_Keys(t *testing.T) {
 
 		// All keys
 		c.sendCommand("KEYS", "*")
+
 		resp := c.readReply()
 		if !strings.Contains(resp, "foo") || !strings.Contains(resp, "bar") {
 			t.Errorf("KEYS * should return all keys: %q", resp)
@@ -2700,10 +2904,12 @@ func TestCorrectness_Keys(t *testing.T) {
 
 		// Pattern matching
 		c.sendCommand("KEYS", "foo*")
+
 		resp = c.readReply()
 		if !strings.Contains(resp, "foo") || !strings.Contains(resp, "foobar") {
 			t.Errorf("KEYS foo* should match foo and foobar: %q", resp)
 		}
+
 		if strings.Contains(resp, "hello") {
 			t.Errorf("KEYS foo* should not match hello: %q", resp)
 		}
@@ -2790,6 +2996,7 @@ func TestCorrectness_WrongNumberOfArgs(t *testing.T) {
 
 		// GET without key
 		c.sendCommand("GET")
+
 		resp := c.readReply()
 		if !strings.HasPrefix(resp, "-ERR") {
 			t.Errorf("expected error for GET without args, got %q", resp)
@@ -2797,6 +3004,7 @@ func TestCorrectness_WrongNumberOfArgs(t *testing.T) {
 
 		// SET with only key
 		c.sendCommand("SET", "key")
+
 		resp = c.readReply()
 		if !strings.HasPrefix(resp, "-ERR") {
 			t.Errorf("expected error for SET with only key, got %q", resp)
@@ -2817,6 +3025,7 @@ func TestCorrectness_WrongType(t *testing.T) {
 
 		// Try list operation on string
 		c.sendCommand("LPUSH", "strkey", "item")
+
 		resp := c.readReply()
 		if !strings.Contains(resp, "WRONGTYPE") {
 			t.Errorf("expected WRONGTYPE error, got %q", resp)
@@ -2827,6 +3036,7 @@ func TestCorrectness_WrongType(t *testing.T) {
 
 		// Try hash operation on list
 		c.sendCommand("HGET", "listkey", "field")
+
 		resp = c.readReply()
 		if !strings.Contains(resp, "WRONGTYPE") {
 			t.Errorf("expected WRONGTYPE error, got %q", resp)
@@ -2843,6 +3053,7 @@ func TestCorrectness_UnknownCommand(t *testing.T) {
 		defer c.close()
 
 		c.sendCommand("UNKNOWNCOMMAND", "arg1", "arg2")
+
 		resp := c.readReply()
 		if !strings.HasPrefix(resp, "-ERR") {
 			t.Errorf("expected error for unknown command, got %q", resp)
@@ -2859,10 +3070,13 @@ func TestCorrectness_ConcurrentClients(t *testing.T) {
 		addr, cleanup := startRedisTestServer(t)
 		defer cleanup()
 
-		const numClients = 10
-		const opsPerClient = 100
+		const (
+			numClients   = 10
+			opsPerClient = 100
+		)
 
 		var wg sync.WaitGroup
+
 		errors := make(chan error, numClients*opsPerClient)
 
 		for i := range numClients {
@@ -2879,6 +3093,7 @@ func TestCorrectness_ConcurrentClients(t *testing.T) {
 
 					if resp := c.set(key, value); resp != "OK" {
 						errors <- fmt.Errorf("client %d: set failed: %q", clientID, resp)
+
 						continue
 					}
 
@@ -2907,14 +3122,15 @@ func TestCorrectness_ConcurrentIncr(t *testing.T) {
 		c.set("counter", "0")
 		c.close()
 
-		const numClients = 10
-		const incrsPerClient = 100
+		const (
+			numClients     = 10
+			incrsPerClient = 100
+		)
 
 		var wg sync.WaitGroup
 
 		for range numClients {
 			wg.Go(func() {
-
 				client := newRedisClient(t, addr)
 				defer client.close()
 
@@ -2960,15 +3176,19 @@ func TestCorrectness_Pipeline(t *testing.T) {
 		if resp := c.readReply(); resp != "OK" {
 			t.Errorf("expected OK for SET p1, got %q", resp)
 		}
+
 		if resp := c.readReply(); resp != "OK" {
 			t.Errorf("expected OK for SET p2, got %q", resp)
 		}
+
 		if resp := c.readReply(); resp != "v1" {
 			t.Errorf("expected v1, got %q", resp)
 		}
+
 		if resp := c.readReply(); resp != "v2" {
 			t.Errorf("expected v2, got %q", resp)
 		}
+
 		if resp := c.readReply(); resp != "2" {
 			t.Errorf("expected 2 deleted, got %q", resp)
 		}
@@ -3022,6 +3242,7 @@ func TestCorrectness_ManyKeys(t *testing.T) {
 		if val := c.get("key0"); val != "value0" {
 			t.Errorf("expected value0, got %q", val)
 		}
+
 		if val := c.get("key999"); val != "value999" {
 			t.Errorf("expected value999, got %q", val)
 		}
@@ -3051,6 +3272,7 @@ func TestCorrectness_LargeList(t *testing.T) {
 		if val := c.lindex("largelist", 0); val != "item0" {
 			t.Errorf("expected item0, got %q", val)
 		}
+
 		if val := c.lindex("largelist", -1); val != fmt.Sprintf("item%d", numItems-1) {
 			t.Errorf("expected item%d, got %q", numItems-1, val)
 		}
@@ -3080,6 +3302,7 @@ func TestCorrectness_LargeHash(t *testing.T) {
 		if val := c.hget("largehash", "field0"); val != "value0" {
 			t.Errorf("expected value0, got %q", val)
 		}
+
 		if val := c.hget("largehash", fmt.Sprintf("field%d", numFields-1)); val != fmt.Sprintf("value%d", numFields-1) {
 			t.Errorf("expected value%d, got %q", numFields-1, val)
 		}
@@ -3117,6 +3340,7 @@ func TestCorrectness_EmptyValue(t *testing.T) {
 		defer c.close()
 
 		c.set("emptykey", "")
+
 		if val := c.get("emptykey"); val != "" {
 			t.Errorf("expected empty string, got %q", val)
 		}
@@ -3141,6 +3365,7 @@ func TestCorrectness_KeysWithSpaces(t *testing.T) {
 		defer c.close()
 
 		c.set("key with spaces", "value with spaces")
+
 		if val := c.get("key with spaces"); val != "value with spaces" {
 			t.Errorf("expected 'value with spaces', got %q", val)
 		}
@@ -3166,6 +3391,7 @@ func TestCorrectness_SpecialCharKeys(t *testing.T) {
 
 		for _, key := range keys {
 			c.set(key, "value")
+
 			if val := c.get(key); val != "value" {
 				t.Errorf("failed for key %q: got %q", key, val)
 			}
@@ -3186,6 +3412,7 @@ func TestCorrectness_NewItemsAfterFlush(t *testing.T) {
 
 		// Set new value after flush
 		c.set("foo", "new")
+
 		if val := c.get("foo"); val != "new" {
 			t.Errorf("expected new value after flush, got %q", val)
 		}
@@ -3245,6 +3472,7 @@ func TestCorrectness_HelloRESP3(t *testing.T) {
 		if !strings.HasPrefix(reply, "map{") {
 			t.Errorf("HELLO 3 should return RESP3 map, got: %s", reply)
 		}
+
 		if !strings.Contains(reply, "proto=3") {
 			t.Errorf("HELLO 3 should report proto=3, got: %s", reply)
 		}
@@ -3261,6 +3489,7 @@ func TestCorrectness_HelloInvalidVersion(t *testing.T) {
 
 		// HELLO 4 is not supported
 		c.sendCommand("HELLO", "4")
+
 		reply := c.readReply()
 		if !strings.Contains(reply, "NOPROTO") {
 			t.Errorf("HELLO 4 should return NOPROTO error, got: %s", reply)
@@ -3294,6 +3523,7 @@ func TestCorrectness_RESP3HGetAll(t *testing.T) {
 
 		// Test RESP3 HGETALL (map)
 		c.sendCommand("HGETALL", "myhash")
+
 		resp3Reply := c.readReply()
 		if !strings.HasPrefix(resp3Reply, "map{") {
 			t.Errorf("RESP3 HGETALL should return map, got: %s", resp3Reply)
@@ -3337,6 +3567,7 @@ func TestCorrectness_HelloWithSetname(t *testing.T) {
 
 		// HELLO 3 SETNAME myclient
 		c.sendCommand("HELLO", "3", "SETNAME", "myclient")
+
 		reply := c.readReply()
 		if !strings.HasPrefix(reply, "map{") {
 			t.Errorf("HELLO 3 SETNAME should return RESP3 map, got: %s", reply)
@@ -3362,6 +3593,7 @@ func TestCorrectness_RESP3PersistsAcrossCommands(t *testing.T) {
 
 		// HGETALL should still use RESP3
 		c.sendCommand("HGETALL", "testhash")
+
 		reply := c.readReply()
 		if !strings.HasPrefix(reply, "map{") {
 			t.Errorf("RESP3 should persist across commands, HGETALL returned: %s", reply)
@@ -3373,6 +3605,7 @@ func TestCorrectness_RESP3PersistsAcrossCommands(t *testing.T) {
 
 		// HGETALL should now use RESP2 format
 		c.sendCommand("HGETALL", "testhash")
+
 		reply = c.readReply()
 		if strings.HasPrefix(reply, "map{") {
 			t.Errorf("After HELLO 2, HGETALL should not return map, got: %s", reply)
@@ -3395,10 +3628,13 @@ func TestCorrectness_SwapDB(t *testing.T) {
 	if resp := c.swapDB(0, 1); !strings.HasPrefix(resp, "-ERR") {
 		t.Errorf("SWAPDB: expected error, got %q", resp)
 	}
+
 	if resp := c.swapDB(0, 0); !strings.HasPrefix(resp, "-ERR") {
 		t.Errorf("SWAPDB same db: expected error, got %q", resp)
 	}
+
 	c.sendCommand("SWAPDB", "a", "b")
+
 	if resp := c.readReply(); !strings.HasPrefix(resp, "-ERR") {
 		t.Errorf("SWAPDB non-numeric: expected error, got %q", resp)
 	}
@@ -3406,6 +3642,7 @@ func TestCorrectness_SwapDB(t *testing.T) {
 	// Data is untouched by a rejected SWAPDB
 	c.set("mykey", "myvalue")
 	c.swapDB(0, 1)
+
 	if val := c.get("mykey"); val != "myvalue" {
 		t.Errorf("after rejected swap: expected myvalue, got %q", val)
 	}
@@ -3428,12 +3665,14 @@ func TestCorrectness_BLPOPInsideTransaction(t *testing.T) {
 	c.readReply()
 
 	c.sendCommand("LPUSH", "xlist", "foo")
+
 	resp := c.readReply()
 	if resp != "1" {
 		t.Fatalf("LPUSH foo: expected 1, got %q", resp)
 	}
 
 	c.sendCommand("LPUSH", "xlist", "bar")
+
 	resp = c.readReply()
 	if resp != "2" {
 		t.Fatalf("LPUSH bar: expected 2, got %q", resp)
@@ -3441,6 +3680,7 @@ func TestCorrectness_BLPOPInsideTransaction(t *testing.T) {
 
 	// Start transaction
 	c.sendCommand("MULTI")
+
 	resp = c.readReply()
 	if resp != "OK" {
 		t.Fatalf("MULTI: expected OK, got %q", resp)
@@ -3448,18 +3688,21 @@ func TestCorrectness_BLPOPInsideTransaction(t *testing.T) {
 
 	// Queue three BLPOP commands
 	c.sendCommand("BLPOP", "xlist", "0")
+
 	resp = c.readReply()
 	if resp != "QUEUED" {
 		t.Fatalf("BLPOP 1: expected QUEUED, got %q", resp)
 	}
 
 	c.sendCommand("BLPOP", "xlist", "0")
+
 	resp = c.readReply()
 	if resp != "QUEUED" {
 		t.Fatalf("BLPOP 2: expected QUEUED, got %q", resp)
 	}
 
 	c.sendCommand("BLPOP", "xlist", "0")
+
 	resp = c.readReply()
 	if resp != "QUEUED" {
 		t.Fatalf("BLPOP 3: expected QUEUED, got %q", resp)
@@ -3491,6 +3734,7 @@ func TestCorrectness_BLPOP_NotificationsAfterFlush(t *testing.T) {
 
 	c1 := newRedisClient(t, addr)
 	defer c1.close()
+
 	c2 := newRedisClient(t, addr)
 	defer c2.close()
 
@@ -3499,8 +3743,10 @@ func TestCorrectness_BLPOP_NotificationsAfterFlush(t *testing.T) {
 	c2.readReply()
 
 	// Client 1: start BLPOP in a goroutine (it will block)
-	var blpopResult string
-	var blpopDone sync.WaitGroup
+	var (
+		blpopResult string
+		blpopDone   sync.WaitGroup
+	)
 	blpopDone.Go(func() {
 		c1.sendCommand("BLPOP", "list", "5")
 		blpopResult = c1.readReply()
@@ -3511,12 +3757,14 @@ func TestCorrectness_BLPOP_NotificationsAfterFlush(t *testing.T) {
 
 	// Client 2: MULTI { LPUSH list a } EXEC — notification fires after commit
 	c2.sendCommand("MULTI")
+
 	resp := c2.readReply()
 	if resp != "OK" {
 		t.Fatalf("MULTI: expected OK, got %q", resp)
 	}
 
 	c2.sendCommand("LPUSH", "list", "a")
+
 	resp = c2.readReply()
 	if resp != "QUEUED" {
 		t.Fatalf("LPUSH: expected QUEUED, got %q", resp)
@@ -3543,6 +3791,7 @@ func TestCorrectness_BLPOP_NonTransactional(t *testing.T) {
 
 	c1 := newRedisClient(t, addr)
 	defer c1.close()
+
 	c2 := newRedisClient(t, addr)
 	defer c2.close()
 
@@ -3551,8 +3800,10 @@ func TestCorrectness_BLPOP_NonTransactional(t *testing.T) {
 	c2.readReply()
 
 	// Client 1: block on BLPOP
-	var blpopResult string
-	var blpopDone sync.WaitGroup
+	var (
+		blpopResult string
+		blpopDone   sync.WaitGroup
+	)
 	blpopDone.Go(func() {
 		c1.sendCommand("BLPOP", "list", "5")
 		blpopResult = c1.readReply()
@@ -3562,6 +3813,7 @@ func TestCorrectness_BLPOP_NonTransactional(t *testing.T) {
 
 	// Client 2: simple LPUSH (non-transactional)
 	c2.sendCommand("LPUSH", "list", "hello")
+
 	resp := c2.readReply()
 	if resp != "1" {
 		t.Fatalf("LPUSH: expected 1, got %q", resp)
@@ -3582,6 +3834,7 @@ func TestCorrectness_BLPOP_LPUSH_DEL_SET_ShouldNotAwakeBlockedClient(t *testing.
 
 	c1 := newRedisClient(t, addr)
 	defer c1.close()
+
 	c2 := newRedisClient(t, addr)
 	defer c2.close()
 
@@ -3590,8 +3843,10 @@ func TestCorrectness_BLPOP_LPUSH_DEL_SET_ShouldNotAwakeBlockedClient(t *testing.
 	c2.readReply()
 
 	// Client 1: block on BLPOP
-	var blpopResult string
-	var blpopDone sync.WaitGroup
+	var (
+		blpopResult string
+		blpopDone   sync.WaitGroup
+	)
 	blpopDone.Go(func() {
 		c1.sendCommand("BLPOP", "list", "5")
 		blpopResult = c1.readReply()
@@ -3601,24 +3856,28 @@ func TestCorrectness_BLPOP_LPUSH_DEL_SET_ShouldNotAwakeBlockedClient(t *testing.
 
 	// Client 2: MULTI { LPUSH list a, DEL list, SET list notalist } EXEC
 	c2.sendCommand("MULTI")
+
 	resp := c2.readReply()
 	if resp != "OK" {
 		t.Fatalf("MULTI: expected OK, got %q", resp)
 	}
 
 	c2.sendCommand("LPUSH", "list", "a")
+
 	resp = c2.readReply()
 	if resp != "QUEUED" {
 		t.Fatalf("LPUSH: expected QUEUED, got %q", resp)
 	}
 
 	c2.sendCommand("DEL", "list")
+
 	resp = c2.readReply()
 	if resp != "QUEUED" {
 		t.Fatalf("DEL: expected QUEUED, got %q", resp)
 	}
 
 	c2.sendCommand("SET", "list", "notalist")
+
 	resp = c2.readReply()
 	if resp != "QUEUED" {
 		t.Fatalf("SET: expected QUEUED, got %q", resp)
@@ -3635,6 +3894,7 @@ func TestCorrectness_BLPOP_LPUSH_DEL_SET_ShouldNotAwakeBlockedClient(t *testing.
 	c2.readReply()
 
 	c2.sendCommand("LPUSH", "list", "b")
+
 	resp = c2.readReply()
 	if resp != "1" {
 		t.Fatalf("LPUSH b: expected 1, got %q", resp)

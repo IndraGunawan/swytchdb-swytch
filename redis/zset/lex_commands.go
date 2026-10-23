@@ -28,16 +28,19 @@ import (
 func handleZLexCount(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) != 3 {
 		w.WriteWrongNumArguments("zlexcount")
+
 		return
 	}
 
 	key := string(cmd.Args[0])
 	keys = []string{key}
 
-	min, ok1 := ParseLexBound(cmd.Args[1])
-	max, ok2 := ParseLexBound(cmd.Args[2])
+	minBound, ok1 := ParseLexBound(cmd.Args[1])
+
+	maxBound, ok2 := ParseLexBound(cmd.Args[2])
 	if !ok1 || !ok2 {
 		w.WriteError("ERR min or max not valid string range item")
+
 		return
 	}
 
@@ -46,21 +49,27 @@ func handleZLexCount(cmd *shared.Command, w *shared.Writer, db *shared.Database)
 		snap, _, exists, wrongType, err := getZSetSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
 			w.WriteInteger(0)
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
 		count := 0
+
 		if snap.NetAdds != nil {
-			for member := range snap.NetAdds {
-				if InLexRange(member, min, max) {
+			for member := range snap.GetNetAdds() {
+				if InLexRange(member, minBound, maxBound) {
 					count++
 				}
 			}
@@ -68,22 +77,26 @@ func handleZLexCount(cmd *shared.Command, w *shared.Writer, db *shared.Database)
 
 		w.WriteInteger(int64(count))
 	}
+
 	return
 }
 
 func handleZRangeByLex(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 3 {
 		w.WriteWrongNumArguments("zrangebylex")
+
 		return
 	}
 
 	key := string(cmd.Args[0])
 	keys = []string{key}
 
-	min, ok1 := ParseLexBound(cmd.Args[1])
-	max, ok2 := ParseLexBound(cmd.Args[2])
+	minBound, ok1 := ParseLexBound(cmd.Args[1])
+
+	maxBound, ok2 := ParseLexBound(cmd.Args[2])
 	if !ok1 || !ok2 {
 		w.WriteError("ERR min or max not valid string range item")
+
 		return
 	}
 
@@ -92,25 +105,33 @@ func handleZRangeByLex(cmd *shared.Command, w *shared.Writer, db *shared.Databas
 	for i := 3; i < len(cmd.Args); i++ {
 		opt := shared.ToUpper(cmd.Args[i])
 		switch string(opt) {
-		case "LIMIT":
+		case optionLimit:
 			if i+2 >= len(cmd.Args) {
 				w.WriteSyntaxError()
+
 				return
 			}
+
 			var err error
+
 			offset, err = strconv.Atoi(string(cmd.Args[i+1]))
 			if err != nil {
 				w.WriteNotInteger()
+
 				return
 			}
+
 			count, err = strconv.Atoi(string(cmd.Args[i+2]))
 			if err != nil {
 				w.WriteNotInteger()
+
 				return
 			}
+
 			i += 2
 		default:
 			w.WriteSyntaxError()
+
 			return
 		}
 	}
@@ -120,14 +141,19 @@ func handleZRangeByLex(cmd *shared.Command, w *shared.Writer, db *shared.Databas
 		snap, _, exists, wrongType, err := getZSetSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
 			w.WriteArray(0)
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
@@ -135,8 +161,9 @@ func handleZRangeByLex(cmd *shared.Command, w *shared.Writer, db *shared.Databas
 
 		// Filter by lex range
 		result := make([]string, 0)
+
 		for _, entry := range sorted {
-			if InLexRange(entry.Member, min, max) {
+			if InLexRange(entry.Member, minBound, maxBound) {
 				result = append(result, entry.Member)
 			}
 		}
@@ -144,30 +171,38 @@ func handleZRangeByLex(cmd *shared.Command, w *shared.Writer, db *shared.Databas
 		// Apply offset and count
 		if offset < 0 {
 			w.WriteArray(0)
+
 			return
 		}
+
 		if offset > 0 {
 			if offset >= len(result) {
 				w.WriteArray(0)
+
 				return
 			}
+
 			result = result[offset:]
 		}
+
 		if count >= 0 && count < len(result) {
 			result = result[:count]
 		}
 
 		w.WriteArray(len(result))
+
 		for _, member := range result {
 			w.WriteBulkStringStr(member)
 		}
 	}
+
 	return
 }
 
 func handleZRevRangeByLex(cmd *shared.Command, w *shared.Writer, db *shared.Database) (valid bool, keys []string, runner shared.CommandRunner) {
 	if len(cmd.Args) < 3 {
 		w.WriteWrongNumArguments("zrevrangebylex")
+
 		return
 	}
 
@@ -175,10 +210,12 @@ func handleZRevRangeByLex(cmd *shared.Command, w *shared.Writer, db *shared.Data
 	keys = []string{key}
 
 	// Note: for ZREVRANGEBYLEX, max comes before min
-	max, ok1 := ParseLexBound(cmd.Args[1])
-	min, ok2 := ParseLexBound(cmd.Args[2])
+	maxBound, ok1 := ParseLexBound(cmd.Args[1])
+
+	minBound, ok2 := ParseLexBound(cmd.Args[2])
 	if !ok1 || !ok2 {
 		w.WriteError("ERR min or max not valid string range item")
+
 		return
 	}
 
@@ -187,25 +224,33 @@ func handleZRevRangeByLex(cmd *shared.Command, w *shared.Writer, db *shared.Data
 	for i := 3; i < len(cmd.Args); i++ {
 		opt := shared.ToUpper(cmd.Args[i])
 		switch string(opt) {
-		case "LIMIT":
+		case optionLimit:
 			if i+2 >= len(cmd.Args) {
 				w.WriteSyntaxError()
+
 				return
 			}
+
 			var err error
+
 			offset, err = strconv.Atoi(string(cmd.Args[i+1]))
 			if err != nil {
 				w.WriteNotInteger()
+
 				return
 			}
+
 			count, err = strconv.Atoi(string(cmd.Args[i+2]))
 			if err != nil {
 				w.WriteNotInteger()
+
 				return
 			}
+
 			i += 2
 		default:
 			w.WriteSyntaxError()
+
 			return
 		}
 	}
@@ -215,14 +260,19 @@ func handleZRevRangeByLex(cmd *shared.Command, w *shared.Writer, db *shared.Data
 		snap, _, exists, wrongType, err := getZSetSnapshot(cmd, key)
 		if err != nil {
 			w.WriteError(err.Error())
+
 			return
 		}
+
 		if !exists {
 			w.WriteArray(0)
+
 			return
 		}
+
 		if wrongType {
 			w.WriteWrongType()
+
 			return
 		}
 
@@ -235,8 +285,9 @@ func handleZRevRangeByLex(cmd *shared.Command, w *shared.Writer, db *shared.Data
 
 		// Filter by lex range
 		result := make([]string, 0)
+
 		for _, entry := range reversed {
-			if InLexRange(entry.Member, min, max) {
+			if InLexRange(entry.Member, minBound, maxBound) {
 				result = append(result, entry.Member)
 			}
 		}
@@ -244,23 +295,30 @@ func handleZRevRangeByLex(cmd *shared.Command, w *shared.Writer, db *shared.Data
 		// Apply offset and count
 		if offset < 0 {
 			w.WriteArray(0)
+
 			return
 		}
+
 		if offset > 0 {
 			if offset >= len(result) {
 				w.WriteArray(0)
+
 				return
 			}
+
 			result = result[offset:]
 		}
+
 		if count >= 0 && count < len(result) {
 			result = result[:count]
 		}
 
 		w.WriteArray(len(result))
+
 		for _, member := range result {
 			w.WriteBulkStringStr(member)
 		}
 	}
+
 	return
 }

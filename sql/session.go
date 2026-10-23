@@ -31,6 +31,11 @@ import (
 	"zombiezen.com/go/sqlite"
 )
 
+const (
+	schemaObjectTable = "table"
+	schemaObjectView  = "view"
+)
+
 // sessionCtxKey is the typed context key under which the per-connection
 // session is stored. We use our own context key (rather than
 // psql-wire's SetAttribute) because SessionMiddleware runs before the
@@ -103,14 +108,17 @@ func (s *session) markRowDirty(table, pk string) {
 	if s.txContext == nil {
 		return
 	}
+
 	if s.txDirtyRows == nil {
 		s.txDirtyRows = make(map[string]map[string]struct{})
 	}
+
 	set, ok := s.txDirtyRows[table]
 	if !ok {
 		set = make(map[string]struct{})
 		s.txDirtyRows[table] = set
 	}
+
 	set[pk] = struct{}{}
 }
 
@@ -121,14 +129,17 @@ func (s *session) dirtyRowPKs(table string) []string {
 	if s.txContext == nil || s.txDirtyRows == nil {
 		return nil
 	}
+
 	set, ok := s.txDirtyRows[table]
 	if !ok {
 		return nil
 	}
+
 	out := make([]string, 0, len(set))
 	for pk := range set {
 		out = append(out, pk)
 	}
+
 	return out
 }
 
@@ -146,14 +157,17 @@ func cloneDirtyRows(src map[string]map[string]struct{}) map[string]map[string]st
 	if len(src) == 0 {
 		return nil
 	}
+
 	out := make(map[string]map[string]struct{}, len(src))
 	for table, pks := range src {
 		cloned := make(map[string]struct{}, len(pks))
 		for pk := range pks {
 			cloned[pk] = struct{}{}
 		}
+
 		out[table] = cloned
 	}
+
 	return out
 }
 
@@ -165,6 +179,7 @@ func (s *session) pushSavepoint(name string) {
 	if s.txContext == nil {
 		return
 	}
+
 	s.savepoints = append(s.savepoints, savepointFrame{
 		name:      name,
 		ctxSnap:   s.txContext.TakeSavepoint(),
@@ -181,7 +196,9 @@ func (s *session) releaseSavepoint(name string) bool {
 	if idx < 0 {
 		return false
 	}
+
 	s.savepoints = s.savepoints[:idx]
+
 	return true
 }
 
@@ -194,10 +211,12 @@ func (s *session) rollbackToSavepoint(name string) bool {
 	if idx < 0 {
 		return false
 	}
+
 	frame := s.savepoints[idx]
 	s.txContext.RestoreSavepoint(frame.ctxSnap)
 	s.txDirtyRows = cloneDirtyRows(frame.dirtyRows)
 	s.savepoints = s.savepoints[:idx+1]
+
 	return true
 }
 
@@ -209,6 +228,7 @@ func (s *session) findSavepoint(name string) int {
 			return i
 		}
 	}
+
 	return -1
 }
 
@@ -247,24 +267,29 @@ func (s *Server) ensureFreshVTabs(sess *session) error {
 	// we additionally pull sqlite_master.sql so we can detect body
 	// drift without reconstructing the original text.
 	local := make(map[string]localSchemaEntry)
+
 	if err := iterateRows(sess.conn,
 		"SELECT name, type, COALESCE(sql, '') FROM sqlite_master WHERE type IN ('table','view')",
 		func(stmt *sqlite.Stmt) error {
 			name := stmt.ColumnText(0)
 			kind := stmt.ColumnText(1)
+
 			entry := localSchemaEntry{kind: kind, sqlText: stmt.ColumnText(2)}
-			if kind == "table" {
+			if kind == schemaObjectTable {
 				innerErr := iterateRows(sess.conn,
 					"PRAGMA table_info("+quoteIdent(name)+")",
 					func(pstmt *sqlite.Stmt) error {
 						entry.cols = append(entry.cols, pstmt.ColumnText(1))
+
 						return nil
 					})
 				if innerErr != nil {
 					return innerErr
 				}
 			}
+
 			local[name] = entry
+
 			return nil
 		}); err != nil {
 		return fmt.Errorf("ensure fresh vtabs: enumerate sqlite_master: %w", err)
@@ -272,10 +297,12 @@ func (s *Server) ensureFreshVTabs(sess *session) error {
 
 	// Consult swytch's committed state.
 	ectx := s.engine.NewContext()
+
 	swytchTables, err := listTables(ectx)
 	if err != nil {
 		return fmt.Errorf("ensure fresh vtabs: list tables: %w", err)
 	}
+
 	swytchViews, err := listViews(ectx)
 	if err != nil {
 		return fmt.Errorf("ensure fresh vtabs: list views: %w", err)
@@ -283,8 +310,9 @@ func (s *Server) ensureFreshVTabs(sess *session) error {
 
 	present := make(map[string]string, len(swytchTables)+len(swytchViews))
 	for _, name := range swytchTables {
-		present[name] = "table"
+		present[name] = schemaObjectTable
 	}
+
 	for _, name := range swytchViews {
 		if _, clash := present[name]; clash {
 			// Shouldn't happen — CREATE paths reject name clashes —
@@ -293,7 +321,8 @@ func (s *Server) ensureFreshVTabs(sess *session) error {
 			// until the view is queried.
 			continue
 		}
-		present[name] = "view"
+
+		present[name] = schemaObjectView
 	}
 
 	// Reconcile tables: create missing, redeclare drifted.
@@ -302,24 +331,29 @@ func (s *Server) ensureFreshVTabs(sess *session) error {
 		if err != nil {
 			sess.log.Warn("sql: skipping vtab refresh with missing schema",
 				"table", name, "err", err)
+
 			continue
 		}
+
 		entry, already := local[name]
 		if !already {
 			if err := registerVTable(sess.conn, live); err != nil {
 				return fmt.Errorf("register new vtab %s: %w", name, err)
 			}
+
 			continue
 		}
 		// Kind flip (was a view, now a table) or column drift.
-		if entry.kind != "table" || !vtabColumnsMatch(live.Columns, entry.cols) {
+		if entry.kind != schemaObjectTable || !vtabColumnsMatch(live.Columns, entry.cols) {
 			dropStmt := "DROP TABLE " + quoteIdent(name)
-			if entry.kind == "view" {
+			if entry.kind == schemaObjectView {
 				dropStmt = "DROP VIEW " + quoteIdent(name)
 			}
+
 			if err := execSimple(sess.conn, dropStmt); err != nil {
 				return fmt.Errorf("drop stale %s %s: %w", entry.kind, name, err)
 			}
+
 			if err := registerVTable(sess.conn, live); err != nil {
 				return fmt.Errorf("re-register vtab %s: %w", name, err)
 			}
@@ -332,24 +366,30 @@ func (s *Server) ensureFreshVTabs(sess *session) error {
 		if err != nil {
 			sess.log.Warn("sql: skipping view refresh with missing body",
 				"view", name, "err", err)
+
 			continue
 		}
+
 		entry, already := local[name]
 		if !already {
 			if err := registerView(sess.conn, v); err != nil {
 				return fmt.Errorf("register new view %s: %w", name, err)
 			}
+
 			continue
 		}
+
 		wantSQL := "CREATE VIEW " + quoteIdent(v.Name) + " " + v.Body
-		if entry.kind != "view" || entry.sqlText != wantSQL {
+		if entry.kind != schemaObjectView || entry.sqlText != wantSQL {
 			dropStmt := "DROP VIEW " + quoteIdent(name)
-			if entry.kind == "table" {
+			if entry.kind == schemaObjectTable {
 				dropStmt = "DROP TABLE " + quoteIdent(name)
 			}
+
 			if err := execSimple(sess.conn, dropStmt); err != nil {
 				return fmt.Errorf("drop stale %s %s: %w", entry.kind, name, err)
 			}
+
 			if err := registerView(sess.conn, v); err != nil {
 				return fmt.Errorf("re-register view %s: %w", name, err)
 			}
@@ -364,18 +404,21 @@ func (s *Server) ensureFreshVTabs(sess *session) error {
 		if _, still := present[name]; still {
 			continue
 		}
+
 		var dropStmt string
-		if entry.kind == "view" {
+		if entry.kind == schemaObjectView {
 			dropStmt = "DROP VIEW " + quoteIdent(name)
 		} else {
 			dropStmt = "DROP TABLE " + quoteIdent(name)
 		}
+
 		if err := execSimple(sess.conn, dropStmt); err != nil {
 			return fmt.Errorf("drop vanished %s %s: %w", entry.kind, name, err)
 		}
 	}
 
 	sess.schemaEpoch = currentEpoch
+
 	return nil
 }
 
@@ -387,11 +430,13 @@ func vtabColumnsMatch(swytch []columnSchema, sqliteCols []string) bool {
 	if len(swytch) != len(sqliteCols) {
 		return false
 	}
+
 	for i, c := range swytch {
 		if c.Name != sqliteCols[i] {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -400,6 +445,7 @@ func newSession(id uint64, log *slog.Logger) (*session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+
 	return &session{
 		id:   id,
 		conn: conn,
@@ -415,14 +461,17 @@ func (s *session) Close() error {
 		if s.conn == nil {
 			return
 		}
+
 		s.closeErr = s.conn.Close()
 		s.conn = nil
 	})
+
 	return s.closeErr
 }
 
 func (s *Server) initSession(ctx context.Context) (context.Context, error) {
 	id := s.nextID.Add(1)
+
 	sess, err := newSession(id, s.log)
 	if err != nil {
 		return ctx, fmt.Errorf("sql: initSession: %w", err)
@@ -442,8 +491,10 @@ func (s *Server) initSession(ctx context.Context) (context.Context, error) {
 	// Connect callbacks fired by the CREATE VIRTUAL TABLE statements
 	// in replay can resolve their session through the Server.
 	s.registerConnSession(sess.conn, sess)
+
 	if err := s.replayTables(sess); err != nil {
 		s.unregisterConnSession(sess.conn)
+
 		return ctx, errors.Join(
 			fmt.Errorf("sql: replay tables: %w", err),
 			closeSessionOnError(sess),
@@ -453,12 +504,15 @@ func (s *Server) initSession(ctx context.Context) (context.Context, error) {
 	// SELECT bodies that reference the vtab-declared tables.
 	if err := s.replayViews(sess); err != nil {
 		s.unregisterConnSession(sess.conn)
+
 		return ctx, errors.Join(
 			fmt.Errorf("sql: replay views: %w", err),
 			closeSessionOnError(sess),
 		)
 	}
+
 	sess.log.Debug("sql session opened")
+
 	return context.WithValue(ctx, sessionCtxKey{}, sess), nil
 }
 
@@ -483,6 +537,7 @@ func (s *Server) unregisterConnSession(conn *sqlite.Conn) {
 func (s *Server) sessionForConn(conn *sqlite.Conn) *session {
 	s.sessionsByConn.mu.RLock()
 	defer s.sessionsByConn.mu.RUnlock()
+
 	return s.sessionsByConn.m[conn]
 }
 
@@ -493,6 +548,7 @@ func closeSessionOnError(sess *session) error {
 	if err := sess.Close(); err != nil {
 		return fmt.Errorf("sql: close partial session: %w", err)
 	}
+
 	return nil
 }
 
@@ -502,22 +558,28 @@ func (s *Server) replayTables(sess *session) error {
 	if s.engine == nil {
 		return nil
 	}
+
 	ectx := s.engine.NewContext()
+
 	names, err := listTables(ectx)
 	if err != nil {
 		return err
 	}
+
 	for _, name := range names {
 		schema, err := loadSchema(ectx, name)
 		if err != nil {
 			sess.log.Warn("sql: skipping table with missing schema",
 				"table", name, "err", err)
+
 			continue
 		}
+
 		if err := registerVTable(sess.conn, schema); err != nil {
 			return fmt.Errorf("replay %q: %w", name, err)
 		}
 	}
+
 	return nil
 }
 
@@ -531,22 +593,28 @@ func (s *Server) replayViews(sess *session) error {
 	if s.engine == nil {
 		return nil
 	}
+
 	ectx := s.engine.NewContext()
+
 	names, err := listViews(ectx)
 	if err != nil {
 		return err
 	}
+
 	for _, name := range names {
 		v, err := loadView(ectx, name)
 		if err != nil {
 			sess.log.Warn("sql: skipping view with missing body",
 				"view", name, "err", err)
+
 			continue
 		}
+
 		if err := registerView(sess.conn, v); err != nil {
 			return fmt.Errorf("replay view %q: %w", name, err)
 		}
 	}
+
 	return nil
 }
 
@@ -555,6 +623,7 @@ func (s *Server) closeSession(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
+
 	s.unregisterConnSession(sess.conn)
 	// If the client disconnected mid-transaction, abort the pending
 	// Context so its writes don't leak into the log.
@@ -562,7 +631,9 @@ func (s *Server) closeSession(ctx context.Context) error {
 		sess.txContext.Abort()
 		sess.clearTxState()
 	}
+
 	sess.log.Debug("sql session closing")
+
 	return sess.Close()
 }
 
@@ -571,5 +642,6 @@ func sessionFromCtx(ctx context.Context) (*session, error) {
 	if !ok {
 		return nil, fmt.Errorf("sql: no session attached to context")
 	}
+
 	return sess, nil
 }

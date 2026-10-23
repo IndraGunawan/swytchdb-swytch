@@ -28,6 +28,15 @@ import (
 	"github.com/swytchdb/swytch/redis/shared"
 )
 
+const (
+	messageTypeMessage      = "message"
+	messageTypePMessage     = "pmessage"
+	messageTypeSubscribe    = "subscribe"
+	messageTypeUnsubscribe  = "unsubscribe"
+	messageTypePSubscribe   = "psubscribe"
+	messageTypePUnsubscribe = "punsubscribe"
+)
+
 // Manager manages pub/sub subscriptions.
 //
 // When a cluster router is registered via shared.SetPubSubClusterRouter,
@@ -78,12 +87,14 @@ func (m *Manager) Subscribe(client *shared.PubSubClient, channels ...string) []i
 			m.channels[channel] = make(map[*shared.PubSubClient]struct{})
 			firstTime = append(firstTime, channel)
 		}
+
 		m.channels[channel][client] = struct{}{}
 
 		// Add channel to client's subscriptions
 		if m.clientChannels[client] == nil {
 			m.clientChannels[client] = make(map[string]struct{})
 		}
+
 		m.clientChannels[client][channel] = struct{}{}
 
 		// Count is total subscriptions (channels + patterns)
@@ -92,6 +103,7 @@ func (m *Manager) Subscribe(client *shared.PubSubClient, channels ...string) []i
 	m.mu.Unlock()
 
 	announceTransitions(firstTime, nil, false)
+
 	return counts
 }
 
@@ -106,8 +118,10 @@ func (m *Manager) Unsubscribe(client *shared.PubSubClient, channels ...string) (
 		clientChans := m.clientChannels[client]
 		if len(clientChans) == 0 {
 			m.mu.Unlock()
+
 			return []string{}, []int{0}
 		}
+
 		channels = make([]string, 0, len(clientChans))
 		for ch := range clientChans {
 			channels = append(channels, ch)
@@ -116,6 +130,7 @@ func (m *Manager) Unsubscribe(client *shared.PubSubClient, channels ...string) (
 
 	names := make([]string, len(channels))
 	counts := make([]int, len(channels))
+
 	var lastGone []string
 
 	for i, channel := range channels {
@@ -124,6 +139,7 @@ func (m *Manager) Unsubscribe(client *shared.PubSubClient, channels ...string) (
 		// Remove client from channel subscribers
 		if subs, ok := m.channels[channel]; ok {
 			delete(subs, client)
+
 			if len(subs) == 0 {
 				delete(m.channels, channel)
 				lastGone = append(lastGone, channel)
@@ -141,6 +157,7 @@ func (m *Manager) Unsubscribe(client *shared.PubSubClient, channels ...string) (
 	m.mu.Unlock()
 
 	announceTransitions(lastGone, nil, true)
+
 	return names, counts
 }
 
@@ -150,6 +167,7 @@ func (m *Manager) PSubscribe(client *shared.PubSubClient, patterns ...string) []
 	m.mu.Lock()
 
 	counts := make([]int, len(patterns))
+
 	var firstTime []string
 
 	for i, pattern := range patterns {
@@ -158,12 +176,14 @@ func (m *Manager) PSubscribe(client *shared.PubSubClient, patterns ...string) []
 			m.patterns[pattern] = make(map[*shared.PubSubClient]struct{})
 			firstTime = append(firstTime, pattern)
 		}
+
 		m.patterns[pattern][client] = struct{}{}
 
 		// Add pattern to client's subscriptions
 		if m.clientPatterns[client] == nil {
 			m.clientPatterns[client] = make(map[string]struct{})
 		}
+
 		m.clientPatterns[client][pattern] = struct{}{}
 
 		// Count is total subscriptions (channels + patterns)
@@ -172,6 +192,7 @@ func (m *Manager) PSubscribe(client *shared.PubSubClient, patterns ...string) []
 	m.mu.Unlock()
 
 	announceTransitions(nil, firstTime, false)
+
 	return counts
 }
 
@@ -185,8 +206,10 @@ func (m *Manager) PUnsubscribe(client *shared.PubSubClient, patterns ...string) 
 		clientPats := m.clientPatterns[client]
 		if len(clientPats) == 0 {
 			m.mu.Unlock()
+
 			return []string{}, []int{0}
 		}
+
 		patterns = make([]string, 0, len(clientPats))
 		for pat := range clientPats {
 			patterns = append(patterns, pat)
@@ -195,6 +218,7 @@ func (m *Manager) PUnsubscribe(client *shared.PubSubClient, patterns ...string) 
 
 	names := make([]string, len(patterns))
 	counts := make([]int, len(patterns))
+
 	var lastGone []string
 
 	for i, pattern := range patterns {
@@ -203,6 +227,7 @@ func (m *Manager) PUnsubscribe(client *shared.PubSubClient, patterns ...string) 
 		// Remove client from pattern subscribers
 		if subs, ok := m.patterns[pattern]; ok {
 			delete(subs, client)
+
 			if len(subs) == 0 {
 				delete(m.patterns, pattern)
 				lastGone = append(lastGone, pattern)
@@ -220,6 +245,7 @@ func (m *Manager) PUnsubscribe(client *shared.PubSubClient, patterns ...string) 
 	m.mu.Unlock()
 
 	announceTransitions(nil, lastGone, true)
+
 	return names, counts
 }
 
@@ -234,6 +260,7 @@ func (m *Manager) Publish(channel string, message []byte) int {
 	if router := shared.GetPubSubClusterRouter(); router != nil {
 		count += router.RouteMessage(channel, message)
 	}
+
 	return count
 }
 
@@ -258,7 +285,7 @@ func (m *Manager) deliverLocal(channel string, message []byte) int {
 	if subs, ok := m.channels[channel]; ok {
 		for client := range subs {
 			if client.Send(&shared.PubSubMessage{
-				Type:    "message",
+				Type:    messageTypeMessage,
 				Channel: channel,
 				Payload: message,
 			}) {
@@ -272,7 +299,7 @@ func (m *Manager) deliverLocal(channel string, message []byte) int {
 		if keytrie.MatchGlob(channel, pattern) {
 			for client := range subs {
 				if client.Send(&shared.PubSubMessage{
-					Type:    "pmessage",
+					Type:    messageTypePMessage,
 					Pattern: pattern,
 					Channel: channel,
 					Payload: message,
@@ -298,10 +325,12 @@ func (m *Manager) LocalSubsSnapshot() (channels []string, patterns []string) {
 	for ch := range m.channels {
 		channels = append(channels, ch)
 	}
+
 	patterns = make([]string, 0, len(m.patterns))
 	for p := range m.patterns {
 		patterns = append(patterns, p)
 	}
+
 	return channels, patterns
 }
 
@@ -309,20 +338,24 @@ func (m *Manager) LocalSubsSnapshot() (channels []string, patterns []string) {
 func (m *Manager) Cleanup(client *shared.PubSubClient) {
 	m.mu.Lock()
 
-	var lastGoneChans []string
-	var lastGonePats []string
+	var (
+		lastGoneChans []string
+		lastGonePats  []string
+	)
 
 	// Remove from all channels
 	if channels := m.clientChannels[client]; channels != nil {
 		for channel := range channels {
 			if subs, ok := m.channels[channel]; ok {
 				delete(subs, client)
+
 				if len(subs) == 0 {
 					delete(m.channels, channel)
 					lastGoneChans = append(lastGoneChans, channel)
 				}
 			}
 		}
+
 		delete(m.clientChannels, client)
 	}
 
@@ -331,12 +364,14 @@ func (m *Manager) Cleanup(client *shared.PubSubClient) {
 		for pattern := range patterns {
 			if subs, ok := m.patterns[pattern]; ok {
 				delete(subs, client)
+
 				if len(subs) == 0 {
 					delete(m.patterns, pattern)
 					lastGonePats = append(lastGonePats, pattern)
 				}
 			}
 		}
+
 		delete(m.clientPatterns, client)
 	}
 	m.mu.Unlock()
@@ -354,17 +389,21 @@ func announceTransitions(channels, patterns []string, unsubscribe bool) {
 	if len(channels) == 0 && len(patterns) == 0 {
 		return
 	}
+
 	router := shared.GetPubSubClusterRouter()
 	if router == nil {
 		return
 	}
+
 	announce := router.AnnounceSub
 	if unsubscribe {
 		announce = router.AnnounceUnsub
 	}
+
 	for _, ch := range channels {
 		announce(ch, false)
 	}
+
 	for _, p := range patterns {
 		announce(p, true)
 	}
@@ -374,12 +413,14 @@ func announceTransitions(channels, patterns []string, unsubscribe bool) {
 // optional glob pattern.
 func (m *Manager) Channels(pattern string) []string {
 	token := m.mu.RLock()
+
 	seen := make(map[string]struct{}, len(m.channels))
 	for channel := range m.channels {
 		if pattern == "" || keytrie.MatchGlob(channel, pattern) {
 			seen[channel] = struct{}{}
 		}
 	}
+
 	m.mu.RUnlock(token)
 
 	if router := shared.GetPubSubClusterRouter(); router != nil {
@@ -392,7 +433,9 @@ func (m *Manager) Channels(pattern string) []string {
 	for ch := range seen {
 		result = append(result, ch)
 	}
+
 	sort.Strings(result)
+
 	return result
 }
 
@@ -410,6 +453,7 @@ func (m *Manager) NumSub(channels ...string) map[string]int {
 			result[channel] = 0
 		}
 	}
+
 	m.mu.RUnlock(token)
 
 	if router := shared.GetPubSubClusterRouter(); router != nil {
@@ -418,6 +462,7 @@ func (m *Manager) NumSub(channels ...string) map[string]int {
 			result[ch] += n
 		}
 	}
+
 	return result
 }
 
@@ -425,10 +470,12 @@ func (m *Manager) NumSub(channels ...string) map[string]int {
 // across the cluster, deduped across local and remote peers.
 func (m *Manager) NumPat() int {
 	token := m.mu.RLock()
+
 	seen := make(map[string]struct{}, len(m.patterns))
 	for p := range m.patterns {
 		seen[p] = struct{}{}
 	}
+
 	m.mu.RUnlock(token)
 
 	if router := shared.GetPubSubClusterRouter(); router != nil {
@@ -436,6 +483,7 @@ func (m *Manager) NumPat() int {
 			seen[p] = struct{}{}
 		}
 	}
+
 	return len(seen)
 }
 
@@ -454,53 +502,61 @@ func FormatPubSubMessage(msg *shared.PubSubMessage, protocol shared.ProtocolVers
 	w.SetProtocol(protocol)
 
 	switch msg.Type {
-	case "message":
+	case messageTypeMessage:
 		if protocol == shared.RESP3 {
 			w.WritePush(3)
 		} else {
 			w.WriteArray(3)
 		}
-		w.WriteBulkStringStr("message")
+
+		w.WriteBulkStringStr(messageTypeMessage)
 		w.WriteBulkStringStr(msg.Channel)
 		w.WriteBulkString(msg.Payload)
 
-	case "pmessage":
+	case messageTypePMessage:
 		if protocol == shared.RESP3 {
 			w.WritePush(4)
 		} else {
 			w.WriteArray(4)
 		}
-		w.WriteBulkStringStr("pmessage")
+
+		w.WriteBulkStringStr(messageTypePMessage)
 		w.WriteBulkStringStr(msg.Pattern)
 		w.WriteBulkStringStr(msg.Channel)
 		w.WriteBulkString(msg.Payload)
 
-	case "subscribe", "unsubscribe":
+	case messageTypeSubscribe, messageTypeUnsubscribe:
 		if protocol == shared.RESP3 {
 			w.WritePush(3)
 		} else {
 			w.WriteArray(3)
 		}
+
 		w.WriteBulkStringStr(msg.Type)
+
 		if msg.Channel != "" {
 			w.WriteBulkStringStr(msg.Channel)
 		} else {
 			w.WriteNullBulkString()
 		}
+
 		w.WriteInteger(int64(msg.Count))
 
-	case "psubscribe", "punsubscribe":
+	case messageTypePSubscribe, messageTypePUnsubscribe:
 		if protocol == shared.RESP3 {
 			w.WritePush(3)
 		} else {
 			w.WriteArray(3)
 		}
+
 		w.WriteBulkStringStr(msg.Type)
+
 		if msg.Pattern != "" {
 			w.WriteBulkStringStr(msg.Pattern)
 		} else {
 			w.WriteNullBulkString()
 		}
+
 		w.WriteInteger(int64(msg.Count))
 	}
 

@@ -206,36 +206,43 @@ func evalTri(p *Predicate, row *RowWrite) triState {
 		if p.BoolVal {
 			return triTrue
 		}
+
 		return triFalse
 
 	case PredAnd:
 		// AND: short-circuit on the first FALSE. UNKNOWN degrades
 		// the final answer only if nothing came back FALSE.
 		acc := triTrue
+
 		for i := range p.Children {
 			r := evalTri(&p.Children[i], row)
 			if r == triFalse {
 				return triFalse
 			}
+
 			if r == triUnknown {
 				acc = triUnknown
 			}
 		}
+
 		return acc
 
 	case PredOr:
 		// OR: short-circuit on the first TRUE. UNKNOWN degrades the
 		// answer only if nothing came back TRUE.
 		acc := triFalse
+
 		for i := range p.Children {
 			r := evalTri(&p.Children[i], row)
 			if r == triTrue {
 				return triTrue
 			}
+
 			if r == triUnknown {
 				acc = triUnknown
 			}
 		}
+
 		return acc
 
 	case PredNot:
@@ -245,6 +252,8 @@ func evalTri(p *Predicate, row *RowWrite) triState {
 			return triFalse
 		case triFalse:
 			return triTrue
+		case triUnknown:
+			return triUnknown
 		default:
 			return triUnknown
 		}
@@ -264,11 +273,14 @@ func evalTri(p *Predicate, row *RowWrite) triState {
 			// from panicking if it's called on a mismatched tuple.
 			return triUnknown
 		}
+
 		if row.Cols[p.Col].Kind == sqlite.TypeNull {
 			return triTrue
 		}
+
 		return triFalse
 	}
+
 	return triUnknown
 }
 
@@ -278,10 +290,12 @@ func evalCmp(col int, op CmpOp, lit TypedValue, row *RowWrite) triState {
 	if col < 0 || col >= len(row.Cols) {
 		return triUnknown
 	}
+
 	left := row.Cols[col]
 	if left.Kind == sqlite.TypeNull || lit.Kind == sqlite.TypeNull {
 		return triUnknown
 	}
+
 	return compareTyped(left, op, lit)
 }
 
@@ -291,14 +305,18 @@ func evalColCmp(leftCol int, op CmpOp, rightCol int, row *RowWrite) triState {
 	if leftCol < 0 || leftCol >= len(row.Cols) {
 		return triUnknown
 	}
+
 	if rightCol < 0 || rightCol >= len(row.Cols) {
 		return triUnknown
 	}
+
 	l := row.Cols[leftCol]
+
 	r := row.Cols[rightCol]
 	if l.Kind == sqlite.TypeNull || r.Kind == sqlite.TypeNull {
 		return triUnknown
 	}
+
 	return compareTyped(l, op, r)
 }
 
@@ -313,6 +331,8 @@ func compareTyped(a TypedValue, op CmpOp, b TypedValue) triState {
 	// Same kind: direct compare.
 	if a.Kind == b.Kind {
 		switch a.Kind {
+		case sqlite.TypeNull:
+			return triUnknown
 		case sqlite.TypeInteger:
 			return fromCmp(cmpInt(a.Int, b.Int), op)
 		case sqlite.TypeFloat:
@@ -322,14 +342,17 @@ func compareTyped(a TypedValue, op CmpOp, b TypedValue) triState {
 		case sqlite.TypeBlob:
 			return fromCmp(bytes.Compare(a.Blob, b.Blob), op)
 		}
+
 		return triUnknown
 	}
 	// Cross-type numeric promotion.
 	if isNumeric(a.Kind) && isNumeric(b.Kind) {
 		af := numericAsFloat(a)
 		bf := numericAsFloat(b)
+
 		return fromCmp(cmpFloat(af, bf), op)
 	}
+
 	return triUnknown
 }
 
@@ -341,6 +364,7 @@ func numericAsFloat(v TypedValue) float64 {
 	if v.Kind == sqlite.TypeFloat {
 		return v.Float
 	}
+
 	return float64(v.Int)
 }
 
@@ -352,6 +376,7 @@ func cmpInt(a, b int64) int {
 	case a > b:
 		return 1
 	}
+
 	return 0
 }
 
@@ -362,6 +387,7 @@ func cmpFloat(a, b float64) int {
 	case a > b:
 		return 1
 	}
+
 	return 0
 }
 
@@ -372,6 +398,7 @@ func cmpStr(a, b string) int {
 	case a > b:
 		return 1
 	}
+
 	return 0
 }
 
@@ -379,6 +406,7 @@ func cmpStr(a, b string) int {
 // the given operator.
 func fromCmp(cmp int, op CmpOp) triState {
 	var yes bool
+
 	switch op {
 	case OpEq:
 		yes = cmp == 0
@@ -393,8 +421,10 @@ func fromCmp(cmp int, op CmpOp) triState {
 	default:
 		return triUnknown
 	}
+
 	if yes {
 		return triTrue
 	}
+
 	return triFalse
 }

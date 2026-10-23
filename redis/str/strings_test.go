@@ -45,11 +45,14 @@ func runHandler(handler shared.HandlerFunc, cmd *shared.Command) string {
 
 	buf := &bytes.Buffer{}
 	w := shared.NewWriter(buf)
+
 	valid, _, runner := handler(cmd, w, nil)
 	if valid && runner != nil {
 		runner()
+
 		_ = ctx.Flush()
 	}
+
 	return buf.String()
 }
 
@@ -59,16 +62,19 @@ func runHandlerWith(eng *effects.Engine, ctx *effects.Context, handler shared.Ha
 
 	buf := &bytes.Buffer{}
 	w := shared.NewWriter(buf)
+
 	valid, _, runner := handler(cmd, w, nil)
 	if valid && runner != nil {
 		runner()
+
 		_ = ctx.Flush()
 	}
+
 	return buf.String()
 }
 
 // seedString creates a string key via effects.
-func seedString(eng *effects.Engine, ctx *effects.Context, key string, value []byte) {
+func seedString(ctx *effects.Context, key string, value []byte) {
 	_ = ctx.Emit(&pb.Effect{
 		Key: []byte(key),
 		Kind: &pb.Effect_Data{Data: &pb.DataEffect{
@@ -86,7 +92,7 @@ func seedString(eng *effects.Engine, ctx *effects.Context, key string, value []b
 }
 
 // seedStringWithExpiry creates a string key with expiry via effects.
-func seedStringWithExpiry(eng *effects.Engine, ctx *effects.Context, key string, value []byte, expiresAtTs *timestamppb.Timestamp) {
+func seedStringWithExpiry(ctx *effects.Context, key string, value []byte, expiresAtTs *timestamppb.Timestamp) {
 	_ = ctx.Emit(&pb.Effect{
 		Key: []byte(key),
 		Kind: &pb.Effect_Data{Data: &pb.DataEffect{
@@ -104,7 +110,7 @@ func seedStringWithExpiry(eng *effects.Engine, ctx *effects.Context, key string,
 }
 
 // seedHash creates a hash key via effects (for wrong-type testing).
-func seedHash(eng *effects.Engine, ctx *effects.Context, key string) {
+func seedHash(ctx *effects.Context, key string) {
 	_ = ctx.Emit(&pb.Effect{
 		Key: []byte(key),
 		Kind: &pb.Effect_Data{Data: &pb.DataEffect{
@@ -123,7 +129,7 @@ func seedHash(eng *effects.Engine, ctx *effects.Context, key string) {
 }
 
 // seedBitmap creates a bitmap key via effects (for reconstruction testing).
-func seedBitmap(eng *effects.Engine, ctx *effects.Context, key string, data []byte) {
+func seedBitmap(ctx *effects.Context, key string, data []byte) {
 	for byteIdx, b := range data {
 		for bitIdx := 7; bitIdx >= 0; bitIdx-- {
 			if (b>>uint(bitIdx))&1 == 1 {
@@ -141,6 +147,7 @@ func seedBitmap(eng *effects.Engine, ctx *effects.Context, key string, data []by
 			}
 		}
 	}
+
 	_ = ctx.Emit(&pb.Effect{
 		Key:  []byte(key),
 		Kind: &pb.Effect_Meta{Meta: &pb.MetaEffect{TypeTag: pb.ValueType_TYPE_BITMAP}},
@@ -159,7 +166,7 @@ func TestHandleGet(t *testing.T) {
 	t.Run("existing key returns value", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleGet, &shared.Command{Type: shared.CmdGet, Args: [][]byte{[]byte("mykey")}})
 		if got != "$5\r\nhello\r\n" {
@@ -170,7 +177,7 @@ func TestHandleGet(t *testing.T) {
 	t.Run("wrong type returns WRONGTYPE", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedHash(eng, ctx, "hashkey")
+		seedHash(ctx, "hashkey")
 
 		got := runHandlerWith(eng, ctx, handleGet, &shared.Command{Type: shared.CmdGet, Args: [][]byte{[]byte("hashkey")}})
 		if !strings.Contains(got, "WRONGTYPE") {
@@ -182,7 +189,7 @@ func TestHandleGet(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
 		// Bitmap with byte 0x80 (bit 0 set)
-		seedBitmap(eng, ctx, "bitmapkey", []byte{0x80})
+		seedBitmap(ctx, "bitmapkey", []byte{0x80})
 
 		got := runHandlerWith(eng, ctx, handleGet, &shared.Command{Type: shared.CmdGet, Args: [][]byte{[]byte("bitmapkey")}})
 		// Should return the reconstructed byte
@@ -195,9 +202,9 @@ func TestHandleGet(t *testing.T) {
 func TestHandleMGet(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	seedString(eng, ctx, "k1", []byte("v1"))
-	seedString(eng, ctx, "k2", []byte("v2"))
-	seedHash(eng, ctx, "hashk")
+	seedString(ctx, "k1", []byte("v1"))
+	seedString(ctx, "k2", []byte("v2"))
+	seedHash(ctx, "hashk")
 
 	got := runHandlerWith(eng, ctx, handleMGet, &shared.Command{
 		Type: shared.CmdMGet,
@@ -208,9 +215,11 @@ func TestHandleMGet(t *testing.T) {
 	if !strings.HasPrefix(got, "*4\r\n") {
 		t.Errorf("got %q, want array of 4", got)
 	}
+
 	if !strings.Contains(got, "$2\r\nv1\r\n") {
 		t.Errorf("got %q, want v1", got)
 	}
+
 	if !strings.Contains(got, "$2\r\nv2\r\n") {
 		t.Errorf("got %q, want v2", got)
 	}
@@ -232,7 +241,7 @@ func TestHandleStrLen(t *testing.T) {
 	t.Run("existing key returns length", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleStrLen, &shared.Command{Type: shared.CmdStrLen, Args: [][]byte{[]byte("mykey")}})
 		if got != ":5\r\n" {
@@ -243,7 +252,7 @@ func TestHandleStrLen(t *testing.T) {
 	t.Run("wrong type returns WRONGTYPE", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedHash(eng, ctx, "hashkey")
+		seedHash(ctx, "hashkey")
 
 		got := runHandlerWith(eng, ctx, handleStrLen, &shared.Command{Type: shared.CmdStrLen, Args: [][]byte{[]byte("hashkey")}})
 		if !strings.Contains(got, "WRONGTYPE") {
@@ -255,7 +264,7 @@ func TestHandleStrLen(t *testing.T) {
 func TestHandleGetRange(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	seedString(eng, ctx, "mykey", []byte("Hello, World!"))
+	seedString(ctx, "mykey", []byte("Hello, World!"))
 
 	tests := []struct {
 		name   string
@@ -282,8 +291,8 @@ func TestHandleGetRange(t *testing.T) {
 func TestHandleLcs(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	seedString(eng, ctx, "key1", []byte("ohmytext"))
-	seedString(eng, ctx, "key2", []byte("mynewtext"))
+	seedString(ctx, "key1", []byte("ohmytext"))
+	seedString(ctx, "key2", []byte("mynewtext"))
 
 	t.Run("default returns LCS string", func(t *testing.T) {
 		got := runHandlerWith(eng, ctx, handleLcs, &shared.Command{
@@ -306,7 +315,8 @@ func TestHandleLcs(t *testing.T) {
 	})
 
 	t.Run("wrong type returns WRONGTYPE", func(t *testing.T) {
-		seedHash(eng, ctx, "hashk")
+		seedHash(ctx, "hashk")
+
 		got := runHandlerWith(eng, ctx, handleLcs, &shared.Command{
 			Type: shared.CmdLcs,
 			Args: [][]byte{[]byte("key1"), []byte("hashk")},
@@ -328,7 +338,7 @@ func TestHandleDigest(t *testing.T) {
 	t.Run("existing key returns 16-char hex", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleDigest, &shared.Command{Type: shared.CmdDigest, Args: [][]byte{[]byte("mykey")}})
 		// Should be $16\r\n<16 hex chars>\r\n
@@ -341,8 +351,8 @@ func TestHandleDigest(t *testing.T) {
 func TestHandleExists(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	seedString(eng, ctx, "k1", []byte("v1"))
-	seedString(eng, ctx, "k2", []byte("v2"))
+	seedString(ctx, "k1", []byte("v1"))
+	seedString(ctx, "k2", []byte("v2"))
 
 	t.Run("single existing", func(t *testing.T) {
 		got := runHandlerWith(eng, ctx, handleExists, &shared.Command{
@@ -388,8 +398,8 @@ func TestHandleExists(t *testing.T) {
 func TestHandleType(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	seedString(eng, ctx, "strkey", []byte("val"))
-	seedHash(eng, ctx, "hashkey")
+	seedString(ctx, "strkey", []byte("val"))
+	seedHash(ctx, "hashkey")
 
 	tests := []struct {
 		name   string
@@ -425,7 +435,7 @@ func TestHandleTTL(t *testing.T) {
 	t.Run("no expiry returns -1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("val"))
+		seedString(ctx, "mykey", []byte("val"))
 
 		got := runHandlerWith(eng, ctx, handleTTL, &shared.Command{Type: shared.CmdTTL, Args: [][]byte{[]byte("mykey")}})
 		if got != ":-1\r\n" {
@@ -437,7 +447,7 @@ func TestHandleTTL(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
 		futureMs := uint64(time.Now().UnixMilli() + 60000) // 60 seconds from now
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("val"), timestamppb.New(time.UnixMilli(int64(futureMs))))
+		seedStringWithExpiry(ctx, "mykey", []byte("val"), timestamppb.New(time.UnixMilli(int64(futureMs))))
 
 		got := runHandlerWith(eng, ctx, handleTTL, &shared.Command{Type: shared.CmdTTL, Args: [][]byte{[]byte("mykey")}})
 		// Should be a positive integer (roughly 59-60)
@@ -458,7 +468,7 @@ func TestHandlePTTL(t *testing.T) {
 	t.Run("no expiry returns -1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("val"))
+		seedString(ctx, "mykey", []byte("val"))
 
 		got := runHandlerWith(eng, ctx, handlePTTL, &shared.Command{Type: shared.CmdPTTL, Args: [][]byte{[]byte("mykey")}})
 		if got != ":-1\r\n" {
@@ -470,7 +480,7 @@ func TestHandlePTTL(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
 		futureMs := uint64(time.Now().UnixMilli() + 60000)
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("val"), timestamppb.New(time.UnixMilli(int64(futureMs))))
+		seedStringWithExpiry(ctx, "mykey", []byte("val"), timestamppb.New(time.UnixMilli(int64(futureMs))))
 
 		got := runHandlerWith(eng, ctx, handlePTTL, &shared.Command{Type: shared.CmdPTTL, Args: [][]byte{[]byte("mykey")}})
 		if !strings.HasPrefix(got, ":") || strings.HasPrefix(got, ":-") {
@@ -490,7 +500,7 @@ func TestHandleExpireTime(t *testing.T) {
 	t.Run("no expiry returns -1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("val"))
+		seedString(ctx, "mykey", []byte("val"))
 
 		got := runHandlerWith(eng, ctx, handleExpireTime, &shared.Command{Type: shared.CmdExpireTime, Args: [][]byte{[]byte("mykey")}})
 		if got != ":-1\r\n" {
@@ -502,7 +512,7 @@ func TestHandleExpireTime(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
 		futureMs := uint64(time.Now().UnixMilli() + 60000)
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("val"), timestamppb.New(time.UnixMilli(int64(futureMs))))
+		seedStringWithExpiry(ctx, "mykey", []byte("val"), timestamppb.New(time.UnixMilli(int64(futureMs))))
 
 		got := runHandlerWith(eng, ctx, handleExpireTime, &shared.Command{Type: shared.CmdExpireTime, Args: [][]byte{[]byte("mykey")}})
 		if !strings.HasPrefix(got, ":") || strings.HasPrefix(got, ":-") {
@@ -522,7 +532,7 @@ func TestHandlePExpireTime(t *testing.T) {
 	t.Run("no expiry returns -1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("val"))
+		seedString(ctx, "mykey", []byte("val"))
 
 		got := runHandlerWith(eng, ctx, handlePExpireTime, &shared.Command{Type: shared.CmdPExpireTime, Args: [][]byte{[]byte("mykey")}})
 		if got != ":-1\r\n" {
@@ -534,7 +544,7 @@ func TestHandlePExpireTime(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
 		futureMs := uint64(time.Now().UnixMilli() + 60000)
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("val"), timestamppb.New(time.UnixMilli(int64(futureMs))))
+		seedStringWithExpiry(ctx, "mykey", []byte("val"), timestamppb.New(time.UnixMilli(int64(futureMs))))
 
 		got := runHandlerWith(eng, ctx, handlePExpireTime, &shared.Command{Type: shared.CmdPExpireTime, Args: [][]byte{[]byte("mykey")}})
 		if !strings.HasPrefix(got, ":") || strings.HasPrefix(got, ":-") {
@@ -544,7 +554,7 @@ func TestHandlePExpireTime(t *testing.T) {
 }
 
 // seedSet creates a set key via effects (for wrong-type testing).
-func seedSet(eng *effects.Engine, ctx *effects.Context, key string, members ...string) {
+func seedSet(ctx *effects.Context, key string, members ...string) {
 	for _, m := range members {
 		_ = ctx.Emit(&pb.Effect{
 			Key: []byte(key),
@@ -557,6 +567,7 @@ func seedSet(eng *effects.Engine, ctx *effects.Context, key string, members ...s
 			}},
 		})
 	}
+
 	_ = ctx.Emit(&pb.Effect{
 		Key:  []byte(key),
 		Kind: &pb.Effect_Meta{Meta: &pb.MetaEffect{TypeTag: pb.ValueType_TYPE_SET}},
@@ -566,7 +577,9 @@ func seedSet(eng *effects.Engine, ctx *effects.Context, key string, members ...s
 
 func testComputeDigest(data []byte) string {
 	hash := xxh3.Hash(data)
+
 	var hashBytes [8]byte
+
 	hashBytes[0] = byte(hash >> 56)
 	hashBytes[1] = byte(hash >> 48)
 	hashBytes[2] = byte(hash >> 40)
@@ -575,6 +588,7 @@ func testComputeDigest(data []byte) string {
 	hashBytes[5] = byte(hash >> 16)
 	hashBytes[6] = byte(hash >> 8)
 	hashBytes[7] = byte(hash)
+
 	return hex.EncodeToString(hashBytes[:])
 }
 
@@ -719,12 +733,14 @@ func TestSetEX(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap == nil || snap.ExpiresAt == nil {
+
+	if snap == nil || snap.GetExpiresAt() == nil {
 		t.Fatal("expected ExpiresAt to be set")
 	}
+
 	now := uint64(time.Now().UnixMilli())
-	if snap.ExpiresAt.AsTime().UnixMilli() < int64(now) || snap.ExpiresAt.AsTime().UnixMilli() > int64(now)+11000 {
-		t.Fatalf("ExpiresAt out of range: %d (now=%d)", snap.ExpiresAt.AsTime().UnixMilli(), now)
+	if snap.GetExpiresAt().AsTime().UnixMilli() < int64(now) || snap.GetExpiresAt().AsTime().UnixMilli() > int64(now)+11000 {
+		t.Fatalf("ExpiresAt out of range: %d (now=%d)", snap.GetExpiresAt().AsTime().UnixMilli(), now)
 	}
 }
 
@@ -744,12 +760,14 @@ func TestPSetEX(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap == nil || snap.ExpiresAt == nil {
+
+	if snap == nil || snap.GetExpiresAt() == nil {
 		t.Fatal("expected ExpiresAt to be set")
 	}
+
 	now := uint64(time.Now().UnixMilli())
-	if snap.ExpiresAt.AsTime().UnixMilli() < int64(now) || snap.ExpiresAt.AsTime().UnixMilli() > int64(now)+11000 {
-		t.Fatalf("ExpiresAt out of range: %d (now=%d)", snap.ExpiresAt.AsTime().UnixMilli(), now)
+	if snap.GetExpiresAt().AsTime().UnixMilli() < int64(now) || snap.GetExpiresAt().AsTime().UnixMilli() > int64(now)+11000 {
+		t.Fatalf("ExpiresAt out of range: %d (now=%d)", snap.GetExpiresAt().AsTime().UnixMilli(), now)
 	}
 }
 
@@ -823,13 +841,16 @@ func TestSetEXOptions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if snap == nil {
 				t.Fatal("snapshot nil")
 			}
-			if snap.ExpiresAt == nil {
+
+			if snap.GetExpiresAt() == nil {
 				t.Fatal("ExpiresAt not set")
 			}
-			tt.check(t, uint64(snap.ExpiresAt.AsTime().UnixMilli()))
+
+			tt.check(t, uint64(snap.GetExpiresAt().AsTime().UnixMilli()))
 		})
 	}
 }
@@ -839,7 +860,7 @@ func TestSetKEEPTTL(t *testing.T) {
 	ctx := eng.NewContext()
 
 	futureMs := uint64(time.Now().UnixMilli() + 60000)
-	seedStringWithExpiry(eng, ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(int64(futureMs))))
+	seedStringWithExpiry(ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(int64(futureMs))))
 
 	res := runHandlerWith(eng, ctx, handleSet, &shared.Command{
 		Type: shared.CmdSet,
@@ -853,11 +874,13 @@ func TestSetKEEPTTL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.ExpiresAt.AsTime().UnixMilli() != int64(futureMs) {
-		t.Fatalf("KEEPTTL: expected ExpiresAt=%d, got %d", futureMs, snap.ExpiresAt.AsTime().UnixMilli())
+
+	if snap.GetExpiresAt().AsTime().UnixMilli() != int64(futureMs) {
+		t.Fatalf("KEEPTTL: expected ExpiresAt=%d, got %d", futureMs, snap.GetExpiresAt().AsTime().UnixMilli())
 	}
-	if string(snap.Scalar.GetRaw()) != "world" {
-		t.Fatalf("KEEPTTL: expected value=world, got %q", string(snap.Scalar.GetRaw()))
+
+	if string(snap.GetScalar().GetRaw()) != "world" {
+		t.Fatalf("KEEPTTL: expected value=world, got %q", string(snap.GetScalar().GetRaw()))
 	}
 }
 
@@ -897,7 +920,7 @@ func TestSetIFEQ(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedString(eng, ctx, "mykey", []byte("hello"))
+	seedString(ctx, "mykey", []byte("hello"))
 
 	// IFEQ with matching value → OK
 	res := runHandlerWith(eng, ctx, handleSet, &shared.Command{
@@ -931,7 +954,7 @@ func TestSetIFNE(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedString(eng, ctx, "mykey", []byte("hello"))
+	seedString(ctx, "mykey", []byte("hello"))
 
 	// IFNE with non-matching value → OK
 	res := runHandlerWith(eng, ctx, handleSet, &shared.Command{
@@ -965,7 +988,8 @@ func TestSetIFDEQ(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedString(eng, ctx, "mykey", []byte("hello"))
+	seedString(ctx, "mykey", []byte("hello"))
+
 	digest := testComputeDigest([]byte("hello"))
 
 	// IFDEQ with matching digest → OK
@@ -979,6 +1003,7 @@ func TestSetIFDEQ(t *testing.T) {
 
 	// IFDEQ with non-matching digest → null
 	wrongDigest := testComputeDigest([]byte("notthis"))
+
 	res = runHandlerWith(eng, ctx, handleSet, &shared.Command{
 		Type: shared.CmdSet,
 		Args: [][]byte{[]byte("mykey"), []byte("foo"), []byte("IFDEQ"), []byte(wrongDigest)},
@@ -1001,7 +1026,8 @@ func TestSetIFDNE(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedString(eng, ctx, "mykey", []byte("hello"))
+	seedString(ctx, "mykey", []byte("hello"))
+
 	digest := testComputeDigest([]byte("hello"))
 	wrongDigest := testComputeDigest([]byte("other"))
 
@@ -1040,7 +1066,7 @@ func TestSetGETWrongType(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedSet(eng, ctx, "myset", "a", "b")
+	seedSet(ctx, "myset", "a", "b")
 
 	res := runHandlerWith(eng, ctx, handleSet, &shared.Command{
 		Type: shared.CmdSet,
@@ -1062,7 +1088,7 @@ func TestHandleIncr(t *testing.T) {
 	t.Run("existing key increments", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "counter", []byte("10"))
+		seedString(ctx, "counter", []byte("10"))
 
 		got := runHandlerWith(eng, ctx, handleIncr, &shared.Command{Type: shared.CmdIncr, Args: [][]byte{[]byte("counter")}})
 		if got != ":11\r\n" {
@@ -1073,7 +1099,7 @@ func TestHandleIncr(t *testing.T) {
 	t.Run("non-integer value returns error", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("notanumber"))
+		seedString(ctx, "mykey", []byte("notanumber"))
 
 		got := runHandlerWith(eng, ctx, handleIncr, &shared.Command{Type: shared.CmdIncr, Args: [][]byte{[]byte("mykey")}})
 		if !strings.Contains(got, "not an integer") {
@@ -1084,7 +1110,7 @@ func TestHandleIncr(t *testing.T) {
 	t.Run("wrong type returns WRONGTYPE", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedHash(eng, ctx, "hashkey")
+		seedHash(ctx, "hashkey")
 
 		got := runHandlerWith(eng, ctx, handleIncr, &shared.Command{Type: shared.CmdIncr, Args: [][]byte{[]byte("hashkey")}})
 		if !strings.Contains(got, "WRONGTYPE") {
@@ -1104,7 +1130,7 @@ func TestHandleDecr(t *testing.T) {
 	t.Run("existing key decrements", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "counter", []byte("10"))
+		seedString(ctx, "counter", []byte("10"))
 
 		got := runHandlerWith(eng, ctx, handleDecr, &shared.Command{Type: shared.CmdDecr, Args: [][]byte{[]byte("counter")}})
 		if got != ":9\r\n" {
@@ -1117,7 +1143,7 @@ func TestHandleIncrBy(t *testing.T) {
 	t.Run("delta on existing", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "counter", []byte("10"))
+		seedString(ctx, "counter", []byte("10"))
 
 		got := runHandlerWith(eng, ctx, handleIncrBy, &shared.Command{
 			Type: shared.CmdIncrBy,
@@ -1131,7 +1157,7 @@ func TestHandleIncrBy(t *testing.T) {
 	t.Run("overflow returns error", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "counter", []byte(strconv.FormatInt(math.MaxInt64, 10)))
+		seedString(ctx, "counter", []byte(strconv.FormatInt(math.MaxInt64, 10)))
 
 		got := runHandlerWith(eng, ctx, handleIncrBy, &shared.Command{
 			Type: shared.CmdIncrBy,
@@ -1147,7 +1173,7 @@ func TestHandleDecrBy(t *testing.T) {
 	t.Run("delta on existing", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "counter", []byte("10"))
+		seedString(ctx, "counter", []byte("10"))
 
 		got := runHandlerWith(eng, ctx, handleDecrBy, &shared.Command{
 			Type: shared.CmdDecrBy,
@@ -1173,7 +1199,7 @@ func TestHandleIncrByFloat(t *testing.T) {
 	t.Run("existing float key", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "fkey", []byte("10.5"))
+		seedString(ctx, "fkey", []byte("10.5"))
 
 		got := runHandlerWith(eng, ctx, handleIncrByFloat, &shared.Command{
 			Type: shared.CmdIncrByFloat,
@@ -1209,7 +1235,7 @@ func TestHandleAppend(t *testing.T) {
 	t.Run("existing key", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleAppend, &shared.Command{
 			Type: shared.CmdAppend,
@@ -1279,7 +1305,7 @@ func TestHandleSetRange(t *testing.T) {
 	t.Run("existing key overwrite", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("Hello, World!"))
+		seedString(ctx, "mykey", []byte("Hello, World!"))
 
 		got := runHandlerWith(eng, ctx, handleSetRange, &shared.Command{
 			Type: shared.CmdSetRange,
@@ -1314,7 +1340,7 @@ func TestTTLPreservation(t *testing.T) {
 	ctx := eng.NewContext()
 
 	futureMs := uint64(time.Now().UnixMilli() + 60000)
-	seedStringWithExpiry(eng, ctx, "counter", []byte("10"), timestamppb.New(time.UnixMilli(int64(futureMs))))
+	seedStringWithExpiry(ctx, "counter", []byte("10"), timestamppb.New(time.UnixMilli(int64(futureMs))))
 
 	runHandlerWith(eng, ctx, handleIncr, &shared.Command{
 		Type: shared.CmdIncr,
@@ -1325,11 +1351,13 @@ func TestTTLPreservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if snap == nil {
 		t.Fatal("snapshot nil after INCR")
 	}
-	if snap.ExpiresAt.AsTime().UnixMilli() != int64(futureMs) {
-		t.Fatalf("TTL not preserved: expected %d, got %d", futureMs, snap.ExpiresAt.AsTime().UnixMilli())
+
+	if snap.GetExpiresAt().AsTime().UnixMilli() != int64(futureMs) {
+		t.Fatalf("TTL not preserved: expected %d, got %d", futureMs, snap.GetExpiresAt().AsTime().UnixMilli())
 	}
 }
 
@@ -1355,7 +1383,7 @@ func TestStrLenAfterIncr(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedString(eng, ctx, "counter", []byte("99"))
+	seedString(ctx, "counter", []byte("99"))
 	runHandlerWith(eng, ctx, handleIncr, &shared.Command{
 		Type: shared.CmdIncr,
 		Args: [][]byte{[]byte("counter")},
@@ -1374,7 +1402,7 @@ func TestHandleGetSet(t *testing.T) {
 	t.Run("existing key returns old value and sets new", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("oldval"))
+		seedString(ctx, "mykey", []byte("oldval"))
 
 		got := runHandlerWith(eng, ctx, handleGetSet, &shared.Command{
 			Type: shared.CmdGetSet,
@@ -1419,7 +1447,7 @@ func TestHandleGetSet(t *testing.T) {
 	t.Run("wrong type returns WRONGTYPE", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedHash(eng, ctx, "hashkey")
+		seedHash(ctx, "hashkey")
 
 		got := runHandlerWith(eng, ctx, handleGetSet, &shared.Command{
 			Type: shared.CmdGetSet,
@@ -1433,7 +1461,7 @@ func TestHandleGetSet(t *testing.T) {
 	t.Run("after INCR returns string representation", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "counter", []byte("41"))
+		seedString(ctx, "counter", []byte("41"))
 
 		runHandlerWith(eng, ctx, handleIncr, &shared.Command{
 			Type: shared.CmdIncr,
@@ -1454,7 +1482,7 @@ func TestHandleGetDel(t *testing.T) {
 	t.Run("existing key returns value and deletes", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleGetDel, &shared.Command{
 			Type: shared.CmdGetDel,
@@ -1487,7 +1515,7 @@ func TestHandleGetDel(t *testing.T) {
 	t.Run("wrong type returns WRONGTYPE", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedHash(eng, ctx, "hashkey")
+		seedHash(ctx, "hashkey")
 
 		got := runHandlerWith(eng, ctx, handleGetDel, &shared.Command{
 			Type: shared.CmdGetDel,
@@ -1503,7 +1531,7 @@ func TestHandleGetEx(t *testing.T) {
 	t.Run("EX sets TTL and returns value", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleGetEx, &shared.Command{
 			Type: shared.CmdGetEx,
@@ -1518,7 +1546,7 @@ func TestHandleGetEx(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
 		futureMs := uint64(time.Now().UnixMilli() + 60000)
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(int64(futureMs))))
+		seedStringWithExpiry(ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(int64(futureMs))))
 
 		got := runHandlerWith(eng, ctx, handleGetEx, &shared.Command{
 			Type: shared.CmdGetEx,
@@ -1532,7 +1560,7 @@ func TestHandleGetEx(t *testing.T) {
 	t.Run("no options returns value without TTL change", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleGetEx, &shared.Command{
 			Type: shared.CmdGetEx,
@@ -1556,7 +1584,7 @@ func TestHandleGetEx(t *testing.T) {
 	t.Run("wrong type returns WRONGTYPE", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedHash(eng, ctx, "hashkey")
+		seedHash(ctx, "hashkey")
 
 		got := runHandlerWith(eng, ctx, handleGetEx, &shared.Command{
 			Type: shared.CmdGetEx,
@@ -1572,7 +1600,7 @@ func TestHandleDel(t *testing.T) {
 	t.Run("delete existing key returns 1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleDel, &shared.Command{
 			Type: shared.CmdDel,
@@ -1596,8 +1624,8 @@ func TestHandleDel(t *testing.T) {
 	t.Run("delete multiple keys returns count", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "k1", []byte("v1"))
-		seedString(eng, ctx, "k2", []byte("v2"))
+		seedString(ctx, "k1", []byte("v1"))
+		seedString(ctx, "k2", []byte("v2"))
 
 		got := runHandlerWith(eng, ctx, handleDel, &shared.Command{
 			Type: shared.CmdDel,
@@ -1611,7 +1639,7 @@ func TestHandleDel(t *testing.T) {
 	t.Run("delete non-string type works (type-agnostic)", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedHash(eng, ctx, "hashkey")
+		seedHash(ctx, "hashkey")
 
 		got := runHandlerWith(eng, ctx, handleDel, &shared.Command{
 			Type: shared.CmdDel,
@@ -1627,7 +1655,7 @@ func TestHandleDelEx(t *testing.T) {
 	t.Run("unconditional existing returns 1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleDelEx, &shared.Command{
 			Type: shared.CmdDelEx,
@@ -1651,7 +1679,7 @@ func TestHandleDelEx(t *testing.T) {
 	t.Run("IFEQ matching value returns 1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleDelEx, &shared.Command{
 			Type: shared.CmdDelEx,
@@ -1665,7 +1693,7 @@ func TestHandleDelEx(t *testing.T) {
 	t.Run("IFEQ non-matching value returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleDelEx, &shared.Command{
 			Type: shared.CmdDelEx,
@@ -1689,7 +1717,7 @@ func TestHandleDelEx(t *testing.T) {
 	t.Run("IFNE non-matching returns 1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleDelEx, &shared.Command{
 			Type: shared.CmdDelEx,
@@ -1703,7 +1731,7 @@ func TestHandleDelEx(t *testing.T) {
 	t.Run("IFNE matching returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleDelEx, &shared.Command{
 			Type: shared.CmdDelEx,
@@ -1717,7 +1745,7 @@ func TestHandleDelEx(t *testing.T) {
 	t.Run("IFDEQ digest match returns 1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		hash := xxh3.Hash([]byte("hello"))
 		digest := fmt.Sprintf("%016x", hash)
@@ -1734,7 +1762,7 @@ func TestHandleDelEx(t *testing.T) {
 	t.Run("IFDNE digest mismatch returns 1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		// Use a wrong digest
 		got := runHandlerWith(eng, ctx, handleDelEx, &shared.Command{
@@ -1749,7 +1777,7 @@ func TestHandleDelEx(t *testing.T) {
 	t.Run("wrong type returns error", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedHash(eng, ctx, "hashkey")
+		seedHash(ctx, "hashkey")
 
 		got := runHandlerWith(eng, ctx, handleDelEx, &shared.Command{
 			Type: shared.CmdDelEx,
@@ -1782,6 +1810,7 @@ func TestHandleMSet(t *testing.T) {
 		if got1 != "$2\r\nv1\r\n" {
 			t.Errorf("GET k1: got %q, want v1", got1)
 		}
+
 		got2 := runHandlerWith(eng, ctx, handleGet, &shared.Command{
 			Type: shared.CmdGet,
 			Args: [][]byte{[]byte("k2")},
@@ -1818,7 +1847,7 @@ func TestHandleMSetNX(t *testing.T) {
 	t.Run("one exists returns 0 and none written", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "k1", []byte("existing"))
+		seedString(ctx, "k1", []byte("existing"))
 
 		got := runHandlerWith(eng, ctx, handleMSetNX, &shared.Command{
 			Type: shared.CmdMSetNX,
@@ -1878,7 +1907,7 @@ func TestHandleMSetEX(t *testing.T) {
 	t.Run("NX one exists returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "k1", []byte("existing"))
+		seedString(ctx, "k1", []byte("existing"))
 
 		got := runHandlerWith(eng, ctx, handleMSetEX, &shared.Command{
 			Type: shared.CmdMSetEX,
@@ -1892,8 +1921,8 @@ func TestHandleMSetEX(t *testing.T) {
 	t.Run("XX all exist returns 1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "k1", []byte("old1"))
-		seedString(eng, ctx, "k2", []byte("old2"))
+		seedString(ctx, "k1", []byte("old1"))
+		seedString(ctx, "k2", []byte("old2"))
 
 		got := runHandlerWith(eng, ctx, handleMSetEX, &shared.Command{
 			Type: shared.CmdMSetEX,
@@ -1907,7 +1936,7 @@ func TestHandleMSetEX(t *testing.T) {
 	t.Run("XX one missing returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "k1", []byte("old1"))
+		seedString(ctx, "k1", []byte("old1"))
 
 		got := runHandlerWith(eng, ctx, handleMSetEX, &shared.Command{
 			Type: shared.CmdMSetEX,
@@ -1922,7 +1951,7 @@ func TestHandleMSetEX(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
 		futureMs := uint64(time.Now().UnixMilli() + 999000)
-		seedStringWithExpiry(eng, ctx, "k1", []byte("old"), timestamppb.New(time.UnixMilli(int64(futureMs))))
+		seedStringWithExpiry(ctx, "k1", []byte("old"), timestamppb.New(time.UnixMilli(int64(futureMs))))
 
 		got := runHandlerWith(eng, ctx, handleMSetEX, &shared.Command{
 			Type: shared.CmdMSetEX,
@@ -1956,7 +1985,7 @@ func TestHandleExpire(t *testing.T) {
 	t.Run("existing key sets TTL and returns 1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleExpire, &shared.Command{Type: shared.CmdExpire, Args: [][]byte{[]byte("mykey"), []byte("10")}})
 		if got != ":1\r\n" {
@@ -1964,19 +1993,20 @@ func TestHandleExpire(t *testing.T) {
 		}
 
 		snap, _, _, _ := eng.GetSnapshot("mykey")
-		if snap == nil || snap.ExpiresAt == nil {
+		if snap == nil || snap.GetExpiresAt() == nil {
 			t.Fatal("expected ExpiresAt to be set")
 		}
+
 		now := uint64(time.Now().UnixMilli())
-		if snap.ExpiresAt.AsTime().UnixMilli() < int64(now) || snap.ExpiresAt.AsTime().UnixMilli() > int64(now)+11000 {
-			t.Fatalf("ExpiresAt %d out of range (now=%d)", snap.ExpiresAt.AsTime().UnixMilli(), now)
+		if snap.GetExpiresAt().AsTime().UnixMilli() < int64(now) || snap.GetExpiresAt().AsTime().UnixMilli() > int64(now)+11000 {
+			t.Fatalf("ExpiresAt %d out of range (now=%d)", snap.GetExpiresAt().AsTime().UnixMilli(), now)
 		}
 	})
 
 	t.Run("negative seconds deletes key", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleExpire, &shared.Command{Type: shared.CmdExpire, Args: [][]byte{[]byte("mykey"), []byte("-1")}})
 		if got != ":1\r\n" {
@@ -1984,7 +2014,7 @@ func TestHandleExpire(t *testing.T) {
 		}
 
 		snap, _, _, _ := eng.GetSnapshot("mykey")
-		if snap != nil && snap.Op != pb.EffectOp_REMOVE_OP {
+		if snap != nil && snap.GetOp() != pb.EffectOp_REMOVE_OP {
 			t.Fatal("expected key to be deleted")
 		}
 	})
@@ -1992,7 +2022,7 @@ func TestHandleExpire(t *testing.T) {
 	t.Run("NX: no existing TTL sets it", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleExpire, &shared.Command{Type: shared.CmdExpire, Args: [][]byte{[]byte("mykey"), []byte("10"), []byte("NX")}})
 		if got != ":1\r\n" {
@@ -2003,7 +2033,7 @@ func TestHandleExpire(t *testing.T) {
 	t.Run("NX: has TTL returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+60000)))
+		seedStringWithExpiry(ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+60000)))
 
 		got := runHandlerWith(eng, ctx, handleExpire, &shared.Command{Type: shared.CmdExpire, Args: [][]byte{[]byte("mykey"), []byte("10"), []byte("NX")}})
 		if got != ":0\r\n" {
@@ -2014,7 +2044,7 @@ func TestHandleExpire(t *testing.T) {
 	t.Run("XX: has TTL sets it", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+60000)))
+		seedStringWithExpiry(ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+60000)))
 
 		got := runHandlerWith(eng, ctx, handleExpire, &shared.Command{Type: shared.CmdExpire, Args: [][]byte{[]byte("mykey"), []byte("10"), []byte("XX")}})
 		if got != ":1\r\n" {
@@ -2025,7 +2055,7 @@ func TestHandleExpire(t *testing.T) {
 	t.Run("XX: no TTL returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleExpire, &shared.Command{Type: shared.CmdExpire, Args: [][]byte{[]byte("mykey"), []byte("10"), []byte("XX")}})
 		if got != ":0\r\n" {
@@ -2036,7 +2066,7 @@ func TestHandleExpire(t *testing.T) {
 	t.Run("GT: new > old sets it", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+5000)))
+		seedStringWithExpiry(ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+5000)))
 
 		got := runHandlerWith(eng, ctx, handleExpire, &shared.Command{Type: shared.CmdExpire, Args: [][]byte{[]byte("mykey"), []byte("100"), []byte("GT")}})
 		if got != ":1\r\n" {
@@ -2047,7 +2077,7 @@ func TestHandleExpire(t *testing.T) {
 	t.Run("GT: new <= old returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+500000)))
+		seedStringWithExpiry(ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+500000)))
 
 		got := runHandlerWith(eng, ctx, handleExpire, &shared.Command{Type: shared.CmdExpire, Args: [][]byte{[]byte("mykey"), []byte("10"), []byte("GT")}})
 		if got != ":0\r\n" {
@@ -2058,7 +2088,7 @@ func TestHandleExpire(t *testing.T) {
 	t.Run("LT: new < old sets it", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+500000)))
+		seedStringWithExpiry(ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+500000)))
 
 		got := runHandlerWith(eng, ctx, handleExpire, &shared.Command{Type: shared.CmdExpire, Args: [][]byte{[]byte("mykey"), []byte("10"), []byte("LT")}})
 		if got != ":1\r\n" {
@@ -2069,7 +2099,7 @@ func TestHandleExpire(t *testing.T) {
 	t.Run("LT: new >= old returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+5000)))
+		seedStringWithExpiry(ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+5000)))
 
 		got := runHandlerWith(eng, ctx, handleExpire, &shared.Command{Type: shared.CmdExpire, Args: [][]byte{[]byte("mykey"), []byte("100"), []byte("LT")}})
 		if got != ":0\r\n" {
@@ -2089,9 +2119,10 @@ func TestHandleExpireAt(t *testing.T) {
 	t.Run("future timestamp sets TTL", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		ts := fmt.Sprintf("%d", time.Now().Unix()+100)
+
 		got := runHandlerWith(eng, ctx, handleExpireAt, &shared.Command{Type: shared.CmdExpireAt, Args: [][]byte{[]byte("mykey"), []byte(ts)}})
 		if got != ":1\r\n" {
 			t.Errorf("got %q, want :1", got)
@@ -2101,7 +2132,7 @@ func TestHandleExpireAt(t *testing.T) {
 	t.Run("past timestamp deletes key", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleExpireAt, &shared.Command{Type: shared.CmdExpireAt, Args: [][]byte{[]byte("mykey"), []byte("1")}})
 		if got != ":1\r\n" {
@@ -2109,7 +2140,7 @@ func TestHandleExpireAt(t *testing.T) {
 		}
 
 		snap, _, _, _ := eng.GetSnapshot("mykey")
-		if snap != nil && snap.Op != pb.EffectOp_REMOVE_OP {
+		if snap != nil && snap.GetOp() != pb.EffectOp_REMOVE_OP {
 			t.Fatal("expected key to be deleted")
 		}
 	})
@@ -2126,7 +2157,7 @@ func TestHandlePExpire(t *testing.T) {
 	t.Run("existing key sets TTL in ms", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handlePExpire, &shared.Command{Type: shared.CmdPExpire, Args: [][]byte{[]byte("mykey"), []byte("10000")}})
 		if got != ":1\r\n" {
@@ -2134,7 +2165,7 @@ func TestHandlePExpire(t *testing.T) {
 		}
 
 		snap, _, _, _ := eng.GetSnapshot("mykey")
-		if snap == nil || snap.ExpiresAt == nil {
+		if snap == nil || snap.GetExpiresAt() == nil {
 			t.Fatal("expected ExpiresAt to be set")
 		}
 	})
@@ -2142,7 +2173,7 @@ func TestHandlePExpire(t *testing.T) {
 	t.Run("negative millis deletes key", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handlePExpire, &shared.Command{Type: shared.CmdPExpire, Args: [][]byte{[]byte("mykey"), []byte("-1")}})
 		if got != ":1\r\n" {
@@ -2162,9 +2193,10 @@ func TestHandlePExpireAt(t *testing.T) {
 	t.Run("future ms timestamp sets TTL", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		ts := fmt.Sprintf("%d", time.Now().UnixMilli()+100000)
+
 		got := runHandlerWith(eng, ctx, handlePExpireAt, &shared.Command{Type: shared.CmdPExpireAt, Args: [][]byte{[]byte("mykey"), []byte(ts)}})
 		if got != ":1\r\n" {
 			t.Errorf("got %q, want :1", got)
@@ -2174,7 +2206,7 @@ func TestHandlePExpireAt(t *testing.T) {
 	t.Run("past ms timestamp deletes key", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handlePExpireAt, &shared.Command{Type: shared.CmdPExpireAt, Args: [][]byte{[]byte("mykey"), []byte("1")}})
 		if got != ":1\r\n" {
@@ -2194,7 +2226,7 @@ func TestHandlePersist(t *testing.T) {
 	t.Run("no TTL returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handlePersist, &shared.Command{Type: shared.CmdPersist, Args: [][]byte{[]byte("mykey")}})
 		if got != ":0\r\n" {
@@ -2205,7 +2237,7 @@ func TestHandlePersist(t *testing.T) {
 	t.Run("has TTL clears it and returns 1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+60000)))
+		seedStringWithExpiry(ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+60000)))
 
 		got := runHandlerWith(eng, ctx, handlePersist, &shared.Command{Type: shared.CmdPersist, Args: [][]byte{[]byte("mykey")}})
 		if got != ":1\r\n" {
@@ -2216,15 +2248,16 @@ func TestHandlePersist(t *testing.T) {
 		if snap == nil {
 			t.Fatal("expected key to exist")
 		}
-		if snap.ExpiresAt != nil {
-			t.Fatalf("expected ExpiresAt=nil after PERSIST, got %v", snap.ExpiresAt)
+
+		if snap.GetExpiresAt() != nil {
+			t.Fatalf("expected ExpiresAt=nil after PERSIST, got %v", snap.GetExpiresAt())
 		}
 	})
 
 	t.Run("TTL returns -1 after PERSIST", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedStringWithExpiry(eng, ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+60000)))
+		seedStringWithExpiry(ctx, "mykey", []byte("hello"), timestamppb.New(time.UnixMilli(time.Now().UnixMilli()+60000)))
 
 		runHandlerWith(eng, ctx, handlePersist, &shared.Command{Type: shared.CmdPersist, Args: [][]byte{[]byte("mykey")}})
 
@@ -2241,7 +2274,7 @@ func TestHandleRename(t *testing.T) {
 	t.Run("existing key renames", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "src", []byte("hello"))
+		seedString(ctx, "src", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleRename, &shared.Command{Type: shared.CmdRename, Args: [][]byte{[]byte("src"), []byte("dst")}})
 		if got != "+OK\r\n" {
@@ -2250,15 +2283,16 @@ func TestHandleRename(t *testing.T) {
 
 		// src should be gone
 		snap, _, _, _ := eng.GetSnapshot("src")
-		if snap != nil && snap.Op != pb.EffectOp_REMOVE_OP {
+		if snap != nil && snap.GetOp() != pb.EffectOp_REMOVE_OP {
 			t.Error("expected src to be deleted")
 		}
 
 		// dst should have the value
 		dstSnap, _, _, _ := eng.GetSnapshot("dst")
-		if dstSnap == nil || dstSnap.Scalar == nil {
+		if dstSnap == nil || dstSnap.GetScalar() == nil {
 			t.Fatal("expected dst to exist")
 		}
+
 		raw := snapshotToRaw(dstSnap)
 		if !bytes.Equal(raw, []byte("hello")) {
 			t.Errorf("dst value: got %q, want hello", raw)
@@ -2275,7 +2309,7 @@ func TestHandleRename(t *testing.T) {
 	t.Run("same key returns OK", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleRename, &shared.Command{Type: shared.CmdRename, Args: [][]byte{[]byte("mykey"), []byte("mykey")}})
 		if got != "+OK\r\n" {
@@ -2287,7 +2321,7 @@ func TestHandleRename(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
 		expiresAt := uint64(time.Now().UnixMilli() + 60000)
-		seedStringWithExpiry(eng, ctx, "src", []byte("hello"), timestamppb.New(time.UnixMilli(int64(expiresAt))))
+		seedStringWithExpiry(ctx, "src", []byte("hello"), timestamppb.New(time.UnixMilli(int64(expiresAt))))
 
 		runHandlerWith(eng, ctx, handleRename, &shared.Command{Type: shared.CmdRename, Args: [][]byte{[]byte("src"), []byte("dst")}})
 
@@ -2295,15 +2329,16 @@ func TestHandleRename(t *testing.T) {
 		if dstSnap == nil {
 			t.Fatal("expected dst to exist")
 		}
-		if dstSnap.ExpiresAt.AsTime().UnixMilli() != int64(expiresAt) {
-			t.Fatalf("expected ExpiresAt=%d, got %d", expiresAt, dstSnap.ExpiresAt.AsTime().UnixMilli())
+
+		if dstSnap.GetExpiresAt().AsTime().UnixMilli() != int64(expiresAt) {
+			t.Fatalf("expected ExpiresAt=%d, got %d", expiresAt, dstSnap.GetExpiresAt().AsTime().UnixMilli())
 		}
 	})
 
 	t.Run("rename hash key", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedHash(eng, ctx, "hsrc")
+		seedHash(ctx, "hsrc")
 
 		got := runHandlerWith(eng, ctx, handleRename, &shared.Command{Type: shared.CmdRename, Args: [][]byte{[]byte("hsrc"), []byte("hdst")}})
 		if got != "+OK\r\n" {
@@ -2314,8 +2349,9 @@ func TestHandleRename(t *testing.T) {
 		if dstSnap == nil {
 			t.Fatal("expected hdst to exist")
 		}
-		if dstSnap.TypeTag != pb.ValueType_TYPE_HASH {
-			t.Errorf("expected TYPE_HASH, got %v", dstSnap.TypeTag)
+
+		if dstSnap.GetTypeTag() != pb.ValueType_TYPE_HASH {
+			t.Errorf("expected TYPE_HASH, got %v", dstSnap.GetTypeTag())
 		}
 	})
 }
@@ -2324,7 +2360,7 @@ func TestHandleRenameNX(t *testing.T) {
 	t.Run("dest missing returns 1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "src", []byte("hello"))
+		seedString(ctx, "src", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleRenameNX, &shared.Command{Type: shared.CmdRenameNX, Args: [][]byte{[]byte("src"), []byte("dst")}})
 		if got != ":1\r\n" {
@@ -2335,8 +2371,8 @@ func TestHandleRenameNX(t *testing.T) {
 	t.Run("dest exists returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "src", []byte("hello"))
-		seedString(eng, ctx, "dst", []byte("world"))
+		seedString(ctx, "src", []byte("hello"))
+		seedString(ctx, "dst", []byte("world"))
 
 		got := runHandlerWith(eng, ctx, handleRenameNX, &shared.Command{Type: shared.CmdRenameNX, Args: [][]byte{[]byte("src"), []byte("dst")}})
 		if got != ":0\r\n" {
@@ -2347,7 +2383,7 @@ func TestHandleRenameNX(t *testing.T) {
 	t.Run("same key returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "mykey", []byte("hello"))
+		seedString(ctx, "mykey", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleRenameNX, &shared.Command{Type: shared.CmdRenameNX, Args: [][]byte{[]byte("mykey"), []byte("mykey")}})
 		if got != ":0\r\n" {
@@ -2360,7 +2396,7 @@ func TestHandleCopy(t *testing.T) {
 	t.Run("basic copy returns 1", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "src", []byte("hello"))
+		seedString(ctx, "src", []byte("hello"))
 
 		got := runHandlerWith(eng, ctx, handleCopy, &shared.Command{Type: shared.CmdCopy, Args: [][]byte{[]byte("src"), []byte("dst")}})
 		if got != ":1\r\n" {
@@ -2370,12 +2406,15 @@ func TestHandleCopy(t *testing.T) {
 		// Both keys should exist
 		srcSnap, _, _, _ := eng.GetSnapshot("src")
 		dstSnap, _, _, _ := eng.GetSnapshot("dst")
+
 		if srcSnap == nil {
 			t.Error("src should still exist")
 		}
+
 		if dstSnap == nil {
 			t.Fatal("dst should exist")
 		}
+
 		raw := snapshotToRaw(dstSnap)
 		if !bytes.Equal(raw, []byte("hello")) {
 			t.Errorf("dst value: got %q, want hello", raw)
@@ -2385,8 +2424,8 @@ func TestHandleCopy(t *testing.T) {
 	t.Run("dest exists no REPLACE returns 0", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "src", []byte("hello"))
-		seedString(eng, ctx, "dst", []byte("world"))
+		seedString(ctx, "src", []byte("hello"))
+		seedString(ctx, "dst", []byte("world"))
 
 		got := runHandlerWith(eng, ctx, handleCopy, &shared.Command{Type: shared.CmdCopy, Args: [][]byte{[]byte("src"), []byte("dst")}})
 		if got != ":0\r\n" {
@@ -2397,8 +2436,8 @@ func TestHandleCopy(t *testing.T) {
 	t.Run("REPLACE overwrites dest", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedString(eng, ctx, "src", []byte("hello"))
-		seedString(eng, ctx, "dst", []byte("world"))
+		seedString(ctx, "src", []byte("hello"))
+		seedString(ctx, "dst", []byte("world"))
 
 		got := runHandlerWith(eng, ctx, handleCopy, &shared.Command{Type: shared.CmdCopy, Args: [][]byte{[]byte("src"), []byte("dst"), []byte("REPLACE")}})
 		if got != ":1\r\n" {
@@ -2406,6 +2445,7 @@ func TestHandleCopy(t *testing.T) {
 		}
 
 		dstSnap, _, _, _ := eng.GetSnapshot("dst")
+
 		raw := snapshotToRaw(dstSnap)
 		if !bytes.Equal(raw, []byte("hello")) {
 			t.Errorf("dst value after REPLACE: got %q, want hello", raw)
@@ -2423,7 +2463,7 @@ func TestHandleCopy(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
 		expiresAt := uint64(time.Now().UnixMilli() + 60000)
-		seedStringWithExpiry(eng, ctx, "src", []byte("hello"), timestamppb.New(time.UnixMilli(int64(expiresAt))))
+		seedStringWithExpiry(ctx, "src", []byte("hello"), timestamppb.New(time.UnixMilli(int64(expiresAt))))
 
 		runHandlerWith(eng, ctx, handleCopy, &shared.Command{Type: shared.CmdCopy, Args: [][]byte{[]byte("src"), []byte("dst")}})
 
@@ -2431,18 +2471,20 @@ func TestHandleCopy(t *testing.T) {
 		if dstSnap == nil {
 			t.Fatal("expected dst to exist")
 		}
-		if dstSnap.TypeTag != pb.ValueType_TYPE_STRING {
-			t.Errorf("expected TYPE_STRING, got %v", dstSnap.TypeTag)
+
+		if dstSnap.GetTypeTag() != pb.ValueType_TYPE_STRING {
+			t.Errorf("expected TYPE_STRING, got %v", dstSnap.GetTypeTag())
 		}
-		if dstSnap.ExpiresAt.AsTime().UnixMilli() != int64(expiresAt) {
-			t.Fatalf("expected ExpiresAt=%d, got %d", expiresAt, dstSnap.ExpiresAt.AsTime().UnixMilli())
+
+		if dstSnap.GetExpiresAt().AsTime().UnixMilli() != int64(expiresAt) {
+			t.Fatalf("expected ExpiresAt=%d, got %d", expiresAt, dstSnap.GetExpiresAt().AsTime().UnixMilli())
 		}
 	})
 
 	t.Run("copy hash key", func(t *testing.T) {
 		eng := effects.NewTestEngine()
 		ctx := eng.NewContext()
-		seedHash(eng, ctx, "hsrc")
+		seedHash(ctx, "hsrc")
 
 		got := runHandlerWith(eng, ctx, handleCopy, &shared.Command{Type: shared.CmdCopy, Args: [][]byte{[]byte("hsrc"), []byte("hdst")}})
 		if got != ":1\r\n" {
@@ -2453,10 +2495,12 @@ func TestHandleCopy(t *testing.T) {
 		if dstSnap == nil {
 			t.Fatal("expected hdst to exist")
 		}
-		if dstSnap.TypeTag != pb.ValueType_TYPE_HASH {
-			t.Errorf("expected TYPE_HASH, got %v", dstSnap.TypeTag)
+
+		if dstSnap.GetTypeTag() != pb.ValueType_TYPE_HASH {
+			t.Errorf("expected TYPE_HASH, got %v", dstSnap.GetTypeTag())
 		}
-		if len(dstSnap.NetAdds) == 0 {
+
+		if len(dstSnap.GetNetAdds()) == 0 {
 			t.Error("expected hash fields in dst")
 		}
 	})
@@ -2468,6 +2512,7 @@ func TestHandleMove(t *testing.T) {
 		buf := &bytes.Buffer{}
 		w := shared.NewWriter(buf)
 		valid, _, _ := handleMove(cmd, w, nil)
+
 		return valid, buf.String()
 	}
 
@@ -2476,6 +2521,7 @@ func TestHandleMove(t *testing.T) {
 		if valid {
 			t.Error("expected invalid")
 		}
+
 		if !strings.Contains(got, "not an integer") {
 			t.Errorf("expected not-an-integer error, got %q", got)
 		}
@@ -2486,6 +2532,7 @@ func TestHandleMove(t *testing.T) {
 		if valid {
 			t.Error("expected invalid")
 		}
+
 		if !strings.Contains(got, "out of range") {
 			t.Errorf("expected out-of-range error, got %q", got)
 		}
@@ -2496,6 +2543,7 @@ func TestHandleMove(t *testing.T) {
 		if valid {
 			t.Error("expected invalid")
 		}
+
 		if !strings.Contains(got, "source and destination objects are the same") {
 			t.Errorf("expected same-object error, got %q", got)
 		}

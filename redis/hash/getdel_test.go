@@ -30,12 +30,13 @@ import (
 func TestHandleHGetDel(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	seedHash(eng, ctx, "myhash", map[string]string{"f1": "v1", "f2": "v2", "f3": "v3"})
+	seedHash(ctx, map[string]string{"f1": "v1", "f2": "v2", "f3": "v3"})
 
 	cmd := &shared.Command{Args: [][]byte{
 		[]byte("myhash"), []byte("FIELDS"), []byte("2"),
 		[]byte("f1"), []byte("f2"),
 	}}
+
 	resp := runHandlerWith(eng, ctx, handleHGetDel, cmd)
 	if !strings.Contains(resp, "v1") || !strings.Contains(resp, "v2") {
 		t.Fatalf("expected v1 and v2, got %q", resp)
@@ -43,6 +44,7 @@ func TestHandleHGetDel(t *testing.T) {
 
 	// Verify fields were deleted
 	cmd = &shared.Command{Args: [][]byte{[]byte("myhash"), []byte("f1")}}
+
 	resp = runHandlerWith(eng, ctx, handleHExists, cmd)
 	if !strings.Contains(resp, ":0") {
 		t.Fatalf("expected f1 to be deleted, got %q", resp)
@@ -50,6 +52,7 @@ func TestHandleHGetDel(t *testing.T) {
 
 	// Verify f3 still exists
 	cmd = &shared.Command{Args: [][]byte{[]byte("myhash"), []byte("f3")}}
+
 	resp = runHandlerWith(eng, ctx, handleHExists, cmd)
 	if !strings.Contains(resp, ":1") {
 		t.Fatalf("expected f3 to still exist, got %q", resp)

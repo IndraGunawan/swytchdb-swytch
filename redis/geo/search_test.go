@@ -28,9 +28,9 @@ import (
 )
 
 // addThreeCities seeds Palermo, Catania, and Rome using the effects engine.
-func addThreeCities(t *testing.T, eng *effects.Engine, ctx *effects.Context) {
+func addThreeCities(t *testing.T, ctx *effects.Context) {
 	t.Helper()
-	seedGeoData(eng, ctx, "mygeo", map[string][2]float64{
+	seedGeoData(ctx, map[string][2]float64{
 		"Palermo": {13.361389, 38.115556},
 		"Catania": {15.087269, 37.502669},
 		"Rome":    {12.496366, 41.902782},
@@ -40,7 +40,7 @@ func addThreeCities(t *testing.T, eng *effects.Engine, ctx *effects.Context) {
 func TestHandleGeoSearch_ByRadius_FromLonLat(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearch, &shared.Command{
 		Type: shared.CmdGeoSearch,
@@ -53,9 +53,11 @@ func TestHandleGeoSearch_ByRadius_FromLonLat(t *testing.T) {
 	if !strings.Contains(got, "Palermo") {
 		t.Fatalf("expected Palermo in results, got %q", got)
 	}
+
 	if !strings.Contains(got, "Catania") {
 		t.Fatalf("expected Catania in results, got %q", got)
 	}
+
 	if strings.Contains(got, "Rome") {
 		t.Fatalf("did not expect Rome in results, got %q", got)
 	}
@@ -64,7 +66,7 @@ func TestHandleGeoSearch_ByRadius_FromLonLat(t *testing.T) {
 func TestHandleGeoSearch_ByRadius_FromMember(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearch, &shared.Command{
 		Type: shared.CmdGeoSearch,
@@ -77,6 +79,7 @@ func TestHandleGeoSearch_ByRadius_FromMember(t *testing.T) {
 	if !strings.Contains(got, "Palermo") {
 		t.Fatalf("expected Palermo in results, got %q", got)
 	}
+
 	if !strings.Contains(got, "Catania") {
 		t.Fatalf("expected Catania in results, got %q", got)
 	}
@@ -85,7 +88,7 @@ func TestHandleGeoSearch_ByRadius_FromMember(t *testing.T) {
 func TestHandleGeoSearch_ByBox(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearch, &shared.Command{
 		Type: shared.CmdGeoSearch,
@@ -98,6 +101,7 @@ func TestHandleGeoSearch_ByBox(t *testing.T) {
 	if !strings.Contains(got, "Palermo") {
 		t.Fatalf("expected Palermo in results, got %q", got)
 	}
+
 	if !strings.Contains(got, "Catania") {
 		t.Fatalf("expected Catania in results, got %q", got)
 	}
@@ -106,7 +110,7 @@ func TestHandleGeoSearch_ByBox(t *testing.T) {
 func TestHandleGeoSearch_WithOptions(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearch, &shared.Command{
 		Type: shared.CmdGeoSearch,
@@ -126,7 +130,7 @@ func TestHandleGeoSearch_WithOptions(t *testing.T) {
 func TestHandleGeoSearch_ASC(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearch, &shared.Command{
 		Type: shared.CmdGeoSearch,
@@ -140,8 +144,10 @@ func TestHandleGeoSearch_ASC(t *testing.T) {
 	if !strings.Contains(got, "Palermo") || !strings.Contains(got, "Catania") || !strings.Contains(got, "Rome") {
 		t.Fatalf("expected all three cities, got %q", got)
 	}
+
 	palermoIdx := strings.Index(got, "Palermo")
 	cataniaIdx := strings.Index(got, "Catania")
+
 	romeIdx := strings.Index(got, "Rome")
 	if palermoIdx > cataniaIdx || cataniaIdx > romeIdx {
 		t.Fatalf("expected ASC order: Palermo < Catania < Rome, got positions %d, %d, %d", palermoIdx, cataniaIdx, romeIdx)
@@ -151,7 +157,7 @@ func TestHandleGeoSearch_ASC(t *testing.T) {
 func TestHandleGeoSearch_DESC(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearch, &shared.Command{
 		Type: shared.CmdGeoSearch,
@@ -163,6 +169,7 @@ func TestHandleGeoSearch_DESC(t *testing.T) {
 		},
 	})
 	romeIdx := strings.Index(got, "Rome")
+
 	palermoIdx := strings.Index(got, "Palermo")
 	if romeIdx > palermoIdx {
 		t.Fatalf("expected DESC order: Rome before Palermo, got positions %d, %d", romeIdx, palermoIdx)
@@ -172,7 +179,7 @@ func TestHandleGeoSearch_DESC(t *testing.T) {
 func TestHandleGeoSearch_Count(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearch, &shared.Command{
 		Type: shared.CmdGeoSearch,
@@ -191,7 +198,7 @@ func TestHandleGeoSearch_Count(t *testing.T) {
 func TestHandleGeoSearch_CountAny(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearch, &shared.Command{
 		Type: shared.CmdGeoSearch,
@@ -224,7 +231,7 @@ func TestHandleGeoSearch_NonExistentKey(t *testing.T) {
 func TestHandleGeoSearch_MissingFromClause(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearch, &shared.Command{
 		Type: shared.CmdGeoSearch,
@@ -241,7 +248,7 @@ func TestHandleGeoSearch_MissingFromClause(t *testing.T) {
 func TestHandleGeoSearch_MissingByClause(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearch, &shared.Command{
 		Type: shared.CmdGeoSearch,
@@ -258,7 +265,7 @@ func TestHandleGeoSearch_MissingByClause(t *testing.T) {
 func TestHandleGeoSearch_AnyWithoutCount(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearch, &shared.Command{
 		Type: shared.CmdGeoSearch,
@@ -287,7 +294,7 @@ func TestHandleGeoSearch_WrongNumArgs(t *testing.T) {
 func TestHandleGeoSearchStore(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearchStore, &shared.Command{
 		Type: shared.CmdGeoSearchStore,
@@ -306,6 +313,7 @@ func TestHandleGeoSearchStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSnapshot: %v", err)
 	}
+
 	if snap == nil {
 		t.Fatal("expected destkey to exist")
 	}
@@ -314,7 +322,7 @@ func TestHandleGeoSearchStore(t *testing.T) {
 func TestHandleGeoSearchStore_StoreDist(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearchStore, &shared.Command{
 		Type: shared.CmdGeoSearchStore,
@@ -333,13 +341,16 @@ func TestHandleGeoSearchStore_StoreDist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSnapshot: %v", err)
 	}
+
 	if snap == nil {
 		t.Fatal("expected destkey to exist")
 	}
+
 	score, found := geoMemberScore(snap, "Palermo")
 	if !found {
 		t.Fatal("expected Palermo in destkey")
 	}
+
 	if score > 1.0 {
 		t.Fatalf("expected Palermo distance ~0, got %f", score)
 	}
@@ -348,7 +359,7 @@ func TestHandleGeoSearchStore_StoreDist(t *testing.T) {
 func TestHandleGeoSearchStore_EmptyResult(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearchStore, &shared.Command{
 		Type: shared.CmdGeoSearchStore,
@@ -366,7 +377,7 @@ func TestHandleGeoSearchStore_EmptyResult(t *testing.T) {
 func TestHandleGeoSearchStore_WithCoordError(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoSearchStore, &shared.Command{
 		Type: shared.CmdGeoSearchStore,
@@ -395,7 +406,7 @@ func TestHandleGeoSearchStore_WrongNumArgs(t *testing.T) {
 func TestHandleGeoRadius(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoRadius, &shared.Command{
 		Type: shared.CmdGeoRadius,
@@ -408,6 +419,7 @@ func TestHandleGeoRadius(t *testing.T) {
 	if !strings.Contains(got, "Palermo") {
 		t.Fatalf("expected Palermo in results, got %q", got)
 	}
+
 	if !strings.Contains(got, "Catania") {
 		t.Fatalf("expected Catania in results, got %q", got)
 	}
@@ -416,7 +428,7 @@ func TestHandleGeoRadius(t *testing.T) {
 func TestHandleGeoRadius_WithStore(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoRadius, &shared.Command{
 		Type: shared.CmdGeoRadius,
@@ -445,7 +457,7 @@ func TestHandleGeoRadius_WrongNumArgs(t *testing.T) {
 func TestHandleGeoRadiusByMember(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoRadiusByMember, &shared.Command{
 		Type: shared.CmdGeoRadiusByMember,
@@ -458,6 +470,7 @@ func TestHandleGeoRadiusByMember(t *testing.T) {
 	if !strings.Contains(got, "Palermo") {
 		t.Fatalf("expected Palermo in results, got %q", got)
 	}
+
 	if !strings.Contains(got, "Catania") {
 		t.Fatalf("expected Catania in results, got %q", got)
 	}
@@ -466,7 +479,7 @@ func TestHandleGeoRadiusByMember(t *testing.T) {
 func TestHandleGeoRadiusByMember_WithStore(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoRadiusByMember, &shared.Command{
 		Type: shared.CmdGeoRadiusByMember,
@@ -525,7 +538,7 @@ func TestHandleGeoRadius_RO_RejectsStoreDist(t *testing.T) {
 func TestHandleGeoRadius_RO_AllowsRead(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoRadius, &shared.Command{
 		Type: shared.CmdGeoRadiusRO,
@@ -573,7 +586,7 @@ func TestHandleGeoRadiusByMember_RO_RejectsStoreDist(t *testing.T) {
 func TestHandleGeoRadiusByMember_RO_AllowsRead(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
-	addThreeCities(t, eng, ctx)
+	addThreeCities(t, ctx)
 
 	got := runHandlerWith(eng, ctx, handleGeoRadiusByMember, &shared.Command{
 		Type: shared.CmdGeoRadiusByMemberRO,

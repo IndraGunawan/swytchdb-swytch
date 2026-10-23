@@ -39,11 +39,14 @@ func runHandler(handler shared.HandlerFunc, cmd *shared.Command) string {
 
 	buf := &bytes.Buffer{}
 	w := shared.NewWriter(buf)
+
 	valid, _, runner := handler(cmd, w, nil)
 	if valid && runner != nil {
 		runner()
+
 		_ = ctx.Flush()
 	}
+
 	return buf.String()
 }
 
@@ -53,16 +56,21 @@ func runHandlerWith(eng *effects.Engine, ctx *effects.Context, handler shared.Ha
 
 	buf := &bytes.Buffer{}
 	w := shared.NewWriter(buf)
+
 	valid, _, runner := handler(cmd, w, nil)
 	if valid && runner != nil {
 		runner()
+
 		_ = ctx.Flush()
 	}
+
 	return buf.String()
 }
 
 // seedGeoData adds geo members directly via effects for test setup.
-func seedGeoData(eng *effects.Engine, ctx *effects.Context, key string, members map[string][2]float64) {
+func seedGeoData(ctx *effects.Context, members map[string][2]float64) {
+	const key = "mygeo"
+
 	for member, coords := range members {
 		hash := geoHashEncode(coords[0], coords[1])
 		_ = ctx.Emit(&pb.Effect{
@@ -76,6 +84,7 @@ func seedGeoData(eng *effects.Engine, ctx *effects.Context, key string, members 
 			}},
 		})
 	}
+
 	_ = ctx.Emit(&pb.Effect{
 		Key:  []byte(key),
 		Kind: &pb.Effect_Meta{Meta: &pb.MetaEffect{TypeTag: pb.ValueType_TYPE_GEO}},
@@ -285,6 +294,7 @@ func TestGeoPosMissing(t *testing.T) {
 	if !strings.Contains(got, "*2\r\n") {
 		t.Errorf("GEOPOS = %q, expected array of 2", got)
 	}
+
 	if !strings.Contains(got, "*-1\r\n") {
 		t.Errorf("GEOPOS = %q, expected null array for missing member", got)
 	}
@@ -328,12 +338,14 @@ func TestGeoDist(t *testing.T) {
 		Type: shared.CmdGeoDist,
 		Args: [][]byte{[]byte("mygeo"), []byte("Palermo"), []byte("Catania")},
 	})
+
 	parts := strings.Split(strings.TrimRight(got, "\r\n"), "\r\n")
 	if len(parts) >= 2 {
 		dist, err := strconv.ParseFloat(parts[1], 64)
 		if err != nil {
 			t.Fatalf("failed to parse distance: %v", err)
 		}
+
 		if math.Abs(dist-166274) > 1000 {
 			t.Errorf("GEODIST distance = %f, expected ~166274m", dist)
 		}
@@ -344,12 +356,14 @@ func TestGeoDist(t *testing.T) {
 		Type: shared.CmdGeoDist,
 		Args: [][]byte{[]byte("mygeo"), []byte("Palermo"), []byte("Catania"), []byte("km")},
 	})
+
 	parts = strings.Split(strings.TrimRight(got, "\r\n"), "\r\n")
 	if len(parts) >= 2 {
 		dist, err := strconv.ParseFloat(parts[1], 64)
 		if err != nil {
 			t.Fatalf("failed to parse distance: %v", err)
 		}
+
 		if math.Abs(dist-166.274) > 1 {
 			t.Errorf("GEODIST km = %f, expected ~166.274", dist)
 		}
@@ -423,6 +437,7 @@ func TestGeoHash(t *testing.T) {
 	if !strings.HasPrefix(got, "*3\r\n") {
 		t.Errorf("GEOHASH = %q, expected array of 3", got)
 	}
+
 	if !strings.Contains(got, "$-1\r\n") {
 		t.Errorf("GEOHASH = %q, expected null for missing member", got)
 	}
@@ -461,7 +476,7 @@ func TestGeoSearchByRadius(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedGeoData(eng, ctx, "mygeo", map[string][2]float64{
+	seedGeoData(ctx, map[string][2]float64{
 		"Palermo":  {13.361389, 38.115556},
 		"Catania":  {15.087269, 37.502669},
 		"Rome":     {12.496366, 41.902782},
@@ -481,12 +496,15 @@ func TestGeoSearchByRadius(t *testing.T) {
 	if !strings.Contains(got, "Palermo") {
 		t.Errorf("GEOSEARCH = %q, expected Palermo", got)
 	}
+
 	if !strings.Contains(got, "Catania") {
 		t.Errorf("GEOSEARCH = %q, expected Catania", got)
 	}
+
 	if strings.Contains(got, "Rome") {
 		t.Errorf("GEOSEARCH = %q, did not expect Rome", got)
 	}
+
 	if strings.Contains(got, "Florence") {
 		t.Errorf("GEOSEARCH = %q, did not expect Florence", got)
 	}
@@ -496,7 +514,7 @@ func TestGeoSearchByBox(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedGeoData(eng, ctx, "mygeo", map[string][2]float64{
+	seedGeoData(ctx, map[string][2]float64{
 		"Palermo": {13.361389, 38.115556},
 		"Catania": {15.087269, 37.502669},
 		"Rome":    {12.496366, 41.902782},
@@ -514,6 +532,7 @@ func TestGeoSearchByBox(t *testing.T) {
 	if !strings.Contains(got, "Palermo") {
 		t.Errorf("GEOSEARCH BYBOX = %q, expected Palermo", got)
 	}
+
 	if !strings.Contains(got, "Catania") {
 		t.Errorf("GEOSEARCH BYBOX = %q, expected Catania", got)
 	}
@@ -523,7 +542,7 @@ func TestGeoSearchCount(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedGeoData(eng, ctx, "mygeo", map[string][2]float64{
+	seedGeoData(ctx, map[string][2]float64{
 		"Palermo": {13.361389, 38.115556},
 		"Catania": {15.087269, 37.502669},
 		"Rome":    {12.496366, 41.902782},
@@ -542,6 +561,7 @@ func TestGeoSearchCount(t *testing.T) {
 	if !strings.HasPrefix(got, "*1\r\n") {
 		t.Errorf("GEOSEARCH COUNT 1 = %q, expected array of 1", got)
 	}
+
 	if !strings.Contains(got, "Palermo") {
 		t.Errorf("GEOSEARCH COUNT 1 ASC = %q, expected Palermo", got)
 	}
@@ -551,7 +571,7 @@ func TestGeoSearchDesc(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedGeoData(eng, ctx, "mygeo", map[string][2]float64{
+	seedGeoData(ctx, map[string][2]float64{
 		"Palermo": {13.361389, 38.115556},
 		"Catania": {15.087269, 37.502669},
 		"Rome":    {12.496366, 41.902782},
@@ -570,6 +590,7 @@ func TestGeoSearchDesc(t *testing.T) {
 	if !strings.HasPrefix(got, "*1\r\n") {
 		t.Errorf("GEOSEARCH DESC COUNT 1 = %q, expected array of 1", got)
 	}
+
 	if !strings.Contains(got, "Rome") {
 		t.Errorf("GEOSEARCH DESC COUNT 1 = %q, expected Rome", got)
 	}
@@ -579,7 +600,7 @@ func TestGeoSearchFromMember(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedGeoData(eng, ctx, "mygeo", map[string][2]float64{
+	seedGeoData(ctx, map[string][2]float64{
 		"Palermo": {13.361389, 38.115556},
 		"Catania": {15.087269, 37.502669},
 	})
@@ -603,7 +624,7 @@ func TestGeoSearchStore(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedGeoData(eng, ctx, "mygeo", map[string][2]float64{
+	seedGeoData(ctx, map[string][2]float64{
 		"Palermo": {13.361389, 38.115556},
 		"Catania": {15.087269, 37.502669},
 		"Rome":    {12.496366, 41.902782},
@@ -637,7 +658,7 @@ func TestGeoSearchStoreStoreDist(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedGeoData(eng, ctx, "mygeo", map[string][2]float64{
+	seedGeoData(ctx, map[string][2]float64{
 		"Palermo": {13.361389, 38.115556},
 		"Catania": {15.087269, 37.502669},
 	})
@@ -661,6 +682,7 @@ func TestGeoSearchStoreStoreDist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSnapshot: %v", err)
 	}
+
 	if snap == nil {
 		t.Fatal("dest key not found")
 	}
@@ -670,6 +692,7 @@ func TestGeoSearchStoreStoreDist(t *testing.T) {
 	if !ok {
 		t.Fatal("Palermo not found in dest")
 	}
+
 	if math.Abs(palermoScore) > 1 {
 		t.Errorf("Palermo STOREDIST score = %f, expected ~0", palermoScore)
 	}
@@ -679,6 +702,7 @@ func TestGeoSearchStoreStoreDist(t *testing.T) {
 	if !ok {
 		t.Fatal("Catania not found in dest")
 	}
+
 	if math.Abs(cataniaScore-166.274) > 1 {
 		t.Errorf("Catania STOREDIST score = %f, expected ~166.274 km", cataniaScore)
 	}
@@ -702,7 +726,7 @@ func TestGeoRadiusCompat(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedGeoData(eng, ctx, "mygeo", map[string][2]float64{
+	seedGeoData(ctx, map[string][2]float64{
 		"Palermo": {13.361389, 38.115556},
 		"Catania": {15.087269, 37.502669},
 	})
@@ -726,7 +750,7 @@ func TestGeoRadiusByMemberCompat(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedGeoData(eng, ctx, "mygeo", map[string][2]float64{
+	seedGeoData(ctx, map[string][2]float64{
 		"Palermo": {13.361389, 38.115556},
 		"Catania": {15.087269, 37.502669},
 	})
@@ -791,7 +815,7 @@ func TestGeoSearchWithOptions(t *testing.T) {
 	eng := effects.NewTestEngine()
 	ctx := eng.NewContext()
 
-	seedGeoData(eng, ctx, "mygeo", map[string][2]float64{
+	seedGeoData(ctx, map[string][2]float64{
 		"Palermo": {13.361389, 38.115556},
 		"Catania": {15.087269, 37.502669},
 	})

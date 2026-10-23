@@ -201,6 +201,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 			DebugLogging: config.DebugLogging,
 		}
 		handler = NewHandler(handlerCfg)
+
 		slog.Info("storage backend initialized", "type", "CloxCache")
 	}
 
@@ -261,11 +262,13 @@ func (s *Server) Start() error {
 		if tlsConfig != nil {
 			listener = tls.NewListener(listener, tlsConfig)
 		}
+
 		s.listeners = []net.Listener{listener}
 
 		if s.config.UnixSocketMode != 0 {
 			if err := os.Chmod(s.config.UnixSocket, s.config.UnixSocketMode); err != nil {
 				_ = listener.Close() // Best effort cleanup
+
 				return err
 			}
 		}
@@ -300,7 +303,9 @@ func (s *Server) Start() error {
 				for _, l := range s.listeners {
 					_ = l.Close()
 				}
+
 				s.listeners = nil
+
 				return err
 			}
 
@@ -308,6 +313,7 @@ func (s *Server) Start() error {
 			if tlsConfig != nil {
 				listener = tls.NewListener(listener, tlsConfig)
 			}
+
 			s.listeners = append(s.listeners, listener)
 
 			s.wg.Add(1)
@@ -340,6 +346,7 @@ func (s *Server) Stop() error {
 	// Snapshot connections under the lock, then close outside to avoid
 	// contention with connection handler cleanup that also acquires connsMu.
 	s.connsMu.Lock()
+
 	snapshot := make([]net.Conn, 0, len(s.conns))
 	for conn := range s.conns {
 		snapshot = append(snapshot, conn)
@@ -354,6 +361,7 @@ func (s *Server) Stop() error {
 
 	// Wait for all handlers to finish with a timeout
 	done := make(chan struct{})
+
 	go func() {
 		s.wg.Wait()
 		close(done)
@@ -377,6 +385,7 @@ func (s *Server) Stop() error {
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
+
 	return nil
 }
 
@@ -385,6 +394,7 @@ func (s *Server) Addr() net.Addr {
 	if len(s.listeners) == 0 {
 		return nil
 	}
+
 	return s.listeners[0].Addr()
 }
 
@@ -427,6 +437,7 @@ func (s *Server) acceptLoop(listener net.Listener) {
 				return
 			default:
 				slog.Error("accept error", "error", err)
+
 				continue
 			}
 		}
@@ -471,6 +482,7 @@ func (s *Server) getConnState(conn net.Conn, ctx context.Context) *connState {
 	if readBufSz <= 0 {
 		readBufSz = shared.ReadBufSize
 	}
+
 	writeBufSz := s.config.WriteBufferSize
 	if writeBufSz <= 0 {
 		writeBufSz = shared.DefaultBufSize
@@ -527,8 +539,11 @@ func (s *Server) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
 	defer func() {
 		connCancel() // Cancel context when connection closes
+
 		_ = conn.Close()
+
 		s.stats.ConnectionClosed()
+
 		if s.connSem != nil {
 			<-s.connSem
 		}
@@ -556,13 +571,17 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// if it's blocked in ReadCommandInto (prevents deadlock on early executor exit).
 	defer func() {
 		connCancel()
+
 		_ = conn.Close()
+
 		<-readerDone // Wait for reader goroutine to exit
+
 		for result := range cmdChan {
 			if result.cmd != nil {
 				shared.PutCommand(result.cmd)
 			}
 		}
+
 		putConnState(cs)
 	}()
 
@@ -579,6 +598,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	// Get writer from pool
 	w := shared.GetWriter()
+
 	w.SetStats(s.stats)
 	defer shared.PutWriter(w)
 
@@ -632,6 +652,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 					if s.config.ReadTimeout > 0 {
 						_ = conn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout))
 					}
+
 					continue
 				}
 
@@ -644,6 +665,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				// Bots sending HTTP/SSH can't read Redis protocol anyway (expensive check last)
 				if isTLSHandshakeError(err) {
 					slog.Warn("TLS handshake failed", "remote", conn.RemoteAddr())
+
 					return
 				}
 
@@ -655,12 +677,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 				case <-connCtx.Done():
 					return
 				}
+
 				continue
 			}
 
 			// First successful read - clear handshake timeout and apply normal timeout
 			if firstRead {
 				firstRead = false
+
 				_ = conn.SetDeadline(time.Time{}) // Clear all deadlines
 				if s.config.ReadTimeout > 0 {
 					_ = conn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout))
@@ -673,10 +697,12 @@ func (s *Server) handleConnection(conn net.Conn) {
 			// Handle QUIT specially
 			if parsedCmd.Type == shared.CmdQuit {
 				shared.PutCommand(cmd)
+
 				select {
 				case cmdChan <- readResult{quit: true}:
 				case <-connCtx.Done():
 				}
+
 				return
 			}
 
@@ -689,6 +715,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			case cmdChan <- readResult{cmd: parsedCmd, moreBuffered: moreBuffered}:
 			case <-connCtx.Done():
 				shared.PutCommand(cmd)
+
 				return
 			}
 		}
@@ -705,17 +732,21 @@ func (s *Server) handleConnection(conn net.Conn) {
 				connWriteMu.Lock()
 				if flushErr := cs.writer.Flush(); flushErr != nil {
 					connWriteMu.Unlock()
+
 					return
 				}
 				connWriteMu.Unlock()
+
 				pendingWrites = false
 			}
+
 			w.Buffer().Reset()
 			w.WriteError(result.protocolErr)
 			connWriteMu.Lock()
 			_, _ = cs.writer.Write(w.Buffer().Bytes())
 			_ = cs.writer.Flush()
 			connWriteMu.Unlock()
+
 			continue
 		}
 
@@ -726,16 +757,18 @@ func (s *Server) handleConnection(conn net.Conn) {
 				_ = cs.writer.Flush()
 				connWriteMu.Unlock()
 			}
+
 			return
 		}
 
 		cmd := result.cmd
 
-		lifecycleCtx := cs.conn.Ctx
+		lifecycleCtx := connCtx
+
 		var lifecycleSpan trace.Span
 		if tracing.Enabled() {
-			lifecycleCtx, lifecycleSpan = tracing.Tracer().Start(cs.conn.Ctx, "server.command_lifecycle")
-			cs.conn.Ctx = lifecycleCtx
+			lifecycleCtx, lifecycleSpan = tracing.Tracer().Start(connCtx, "server.command_lifecycle")
+			cs.conn.Ctx = lifecycleCtx //nolint:fatcontext // Each command derives from connCtx, not the previous command's context.
 		}
 
 		// Track last command for CLIENT LIST
@@ -748,16 +781,20 @@ func (s *Server) handleConnection(conn net.Conn) {
 			if s.config.WriteTimeout > 0 {
 				_ = conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
 			}
+
 			connWriteMu.Lock()
 			if flushErr := cs.writer.Flush(); flushErr != nil {
 				connWriteMu.Unlock()
 				shared.PutCommand(cmd)
+
 				if lifecycleSpan != nil {
 					lifecycleSpan.End()
 				}
+
 				return
 			}
 			connWriteMu.Unlock()
+
 			pendingWrites = false
 		}
 
@@ -781,11 +818,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 			_, writeErr := cs.writer.Write(w.Buffer().Bytes())
 			if writeErr != nil {
 				connWriteMu.Unlock()
+
 				if cs.conn.PubSubClient != nil {
 					cs.conn.PubSubClient.SetBusy(false)
 				}
+
 				return
 			}
+
 			pendingWrites = true
 		}
 
@@ -794,6 +834,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		if cs.conn.PubSubClient != nil && cs.conn.Protocol == shared.RESP3 {
 			client := cs.conn.PubSubClient
 			protocol := cs.conn.Protocol
+
 			for {
 				select {
 				case msg := <-client.MsgChan():
@@ -801,13 +842,16 @@ func (s *Server) handleConnection(conn net.Conn) {
 					if _, err := cs.writer.Write(data); err != nil {
 						connWriteMu.Unlock()
 						client.SetBusy(false)
+
 						return
 					}
+
 					pendingWrites = true
 				default:
 					goto doneInlineDelivery
 				}
 			}
+
 		doneInlineDelivery:
 		}
 
@@ -826,6 +870,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 					if broker := shared.GetPubSubBroker(); broker != nil {
 						broker.Cleanup(cs.conn.PubSubClient)
 					}
+
 					cs.conn.PubSubClient = nil
 				}
 			}
@@ -835,6 +880,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			if cs.conn.Protocol != shared.RESP3 {
 				client := cs.conn.PubSubClient
 				protocol := cs.conn.Protocol
+
 				writer := cs.writer
 				go func(client *shared.PubSubClient, protocol shared.ProtocolVersion, writer *bufio.Writer) {
 					if client == nil || writer == nil {
@@ -853,15 +899,18 @@ func (s *Server) handleConnection(conn net.Conn) {
 							}
 							// Format and write the message
 							data := pubsub.FormatPubSubMessage(msg, protocol)
+
 							connWriteMu.Lock()
 							if s.config.WriteTimeout > 0 {
 								_ = conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
 							}
+
 							_, writeErr := writer.Write(data)
 							if writeErr == nil {
 								_ = writer.Flush()
 							}
 							connWriteMu.Unlock()
+
 							if writeErr != nil {
 								return
 							}
@@ -883,18 +932,23 @@ func (s *Server) handleConnection(conn net.Conn) {
 				_, flushSpan := tracing.Tracer().Start(lifecycleCtx, "server.flush_response")
 				defer flushSpan.End()
 			}
+
 			connWriteMu.Lock()
 			if s.config.WriteTimeout > 0 {
 				_ = conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
 			}
+
 			flushErr := cs.writer.Flush()
 			connWriteMu.Unlock()
+
 			if flushErr != nil {
 				if lifecycleSpan != nil {
 					lifecycleSpan.End()
 				}
+
 				return
 			}
+
 			pendingWrites = false
 		}
 
@@ -908,6 +962,7 @@ func isClosedError(err error) bool {
 	if err == nil {
 		return false
 	}
+
 	return errors.Is(err, net.ErrClosed) ||
 		errors.Is(err, io.ErrClosedPipe)
 }
@@ -932,18 +987,22 @@ func isTLSHandshakeError(err error) bool {
 		case x509.UnknownAuthorityError:
 			return true
 		}
+
 		if uw, ok := e.(interface{ Unwrap() error }); ok {
 			e = uw.Unwrap()
 		} else {
 			break
 		}
 	}
+
 	return false
 }
 
 // isBlockingCommand returns true for commands that may block the connection
 // waiting for data. These commands need pending writes flushed before execution.
 func isBlockingCommand(cmd shared.CommandType) bool {
+	// Only these commands need the pre-execution flush; all others return false.
+	//exhaustive:ignore
 	switch cmd {
 	case shared.CmdBLPop, shared.CmdBRPop, shared.CmdBLMPop, shared.CmdBLMove, shared.CmdBRPopLPush,
 		shared.CmdBZPopMin, shared.CmdBZPopMax, shared.CmdBZMPop:

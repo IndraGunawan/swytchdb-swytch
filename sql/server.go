@@ -39,6 +39,8 @@ import (
 	"github.com/swytchdb/engine/effects"
 )
 
+const defaultAdvertisedVersion = "17.0 (Swytch)"
+
 // ServerConfig holds configuration for the SQL server.
 type ServerConfig struct {
 	// Address is the TCP address to listen on (e.g. ":5433").
@@ -66,7 +68,7 @@ type ServerConfig struct {
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
 		Address:           ":5433",
-		AdvertisedVersion: "17.0 (Swytch)",
+		AdvertisedVersion: defaultAdvertisedVersion,
 	}
 }
 
@@ -129,8 +131,9 @@ type Server struct {
 // begin listening — call Start or StartAsync.
 func NewServer(cfg ServerConfig) (*Server, error) {
 	if cfg.AdvertisedVersion == "" {
-		cfg.AdvertisedVersion = "17.0 (Swytch)"
+		cfg.AdvertisedVersion = defaultAdvertisedVersion
 	}
+
 	log := cfg.Logger
 	if log == nil {
 		log = slog.Default()
@@ -141,6 +144,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// (useful in tests and during development).
 	engine := cfg.Engine
 	ownsEngine := false
+
 	if engine == nil {
 		engine = effects.NewEngine(effects.EngineConfig{
 			NodeID:      pb.NewNodeID(),
@@ -187,6 +191,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 			closeOwnedEngineOnError(engine, ownsEngine),
 		)
 	}
+
 	ws.Version = cfg.AdvertisedVersion
 	s.wire = ws
 
@@ -201,6 +206,7 @@ func closeParserOnError(conn *sqlite.Conn) error {
 	if err := conn.Close(); err != nil {
 		return fmt.Errorf("sql: close parser conn: %w", err)
 	}
+
 	return nil
 }
 
@@ -208,9 +214,11 @@ func closeOwnedEngineOnError(engine *effects.Engine, owns bool) error {
 	if !owns {
 		return nil
 	}
+
 	if err := engine.Close(); err != nil {
 		return fmt.Errorf("sql: close engine: %w", err)
 	}
+
 	return nil
 }
 
@@ -226,6 +234,7 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
+
 	return s.serve(listener)
 }
 
@@ -237,10 +246,12 @@ func (s *Server) StartAsync() error {
 	if err != nil {
 		return err
 	}
+
 	s.doneCh = make(chan error, 1)
 	go func() {
 		s.doneCh <- s.serve(listener)
 	}()
+
 	return nil
 }
 
@@ -250,6 +261,7 @@ func (s *Server) Addr() net.Addr {
 	if s.listener == nil {
 		return nil
 	}
+
 	return s.listener.Addr()
 }
 
@@ -260,10 +272,12 @@ func (s *Server) Stop(ctx context.Context) error {
 	if s.wire == nil {
 		return nil
 	}
+
 	var errs []error
 	if err := s.wire.Shutdown(ctx); err != nil && !errors.Is(err, net.ErrClosed) {
 		errs = append(errs, fmt.Errorf("sql: wire shutdown: %w", err))
 	}
+
 	if s.listener != nil {
 		if err := s.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			errs = append(errs, fmt.Errorf("sql: close listener: %w", err))
@@ -276,14 +290,18 @@ func (s *Server) Stop(ctx context.Context) error {
 		if err := s.parserConn.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("sql: close parser conn: %w", err))
 		}
+
 		s.parserConn = nil
 	}
+
 	if s.cfg.ownsEngine && s.engine != nil {
 		if err := s.engine.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("sql: close engine: %w", err))
 		}
+
 		s.engine = nil
 	}
+
 	return errors.Join(errs...)
 }
 
@@ -298,11 +316,13 @@ func (s *Server) listen() (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sql: listen %s: %w", s.cfg.Address, err)
 	}
+
 	s.listener = listener
 	s.log.Info("sql server listening",
 		"address", listener.Addr(),
 		"version", s.cfg.AdvertisedVersion,
 	)
+
 	return listener, nil
 }
 
@@ -311,5 +331,6 @@ func (s *Server) serve(listener net.Listener) error {
 	if errors.Is(err, net.ErrClosed) {
 		return nil
 	}
+
 	return err
 }
