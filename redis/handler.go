@@ -497,7 +497,7 @@ func (h *Handler) ExecuteInto(cmd *shared.Command, w *shared.Writer, conn *share
 
 		for attempt := 0; ; attempt++ {
 			savedLen := w.Buffer().Len()
-			entry.ConnHandler(cmd, w, db, conn)
+			runDataCommand(entry, cmd, w, func() { entry.ConnHandler(cmd, w, db, conn) })
 
 			if cmd.Context != nil && !conn.InTransaction {
 				err := cmd.Context.Flush()
@@ -627,7 +627,7 @@ func (h *Handler) ExecuteInto(cmd *shared.Command, w *shared.Writer, conn *share
 		for attempt := 0; ; attempt++ {
 			savedLen := w.Buffer().Len()
 
-			runner()
+			runDataCommand(entry, cmd, w, runner)
 
 			if cmd.Context != nil && !conn.InTransaction {
 				err := cmd.Context.Flush()
@@ -926,6 +926,9 @@ func (h *Handler) queueCommand(cmd *shared.Command, w *shared.Writer, conn *shar
 
 		return
 	}
+
+	preparedRunner := runner
+	runner = func() { runDataCommand(entry, cmdCopy, w, preparedRunner) }
 
 	if conn.SSITransaction {
 		// TxnPrepare may omit keys (for example EVAL); use the registry's
@@ -1354,11 +1357,10 @@ func (h *Handler) HandleForwardedTransaction(tx *pb.ForwardedTransaction) *pb.Fo
 				cmd.Context = conn.EffectsCtx
 			}
 
-			// Use a discard writer for queuing (QUEUED responses are not forwarded)
-			var discardBuf bytes.Buffer
-
-			discardW := shared.NewWriter(&discardBuf)
-			h.queueCommand(cmd, discardW, conn, db)
+			// Runners capture this writer. Discard only the preparation replies,
+			// so execution writes its results into the forwarded response.
+			h.queueCommand(cmd, w, conn, db)
+			respBuf.Reset()
 		}
 
 		// Set up WATCH keys if present
@@ -1387,7 +1389,15 @@ func (h *Handler) HandleForwardedTransaction(tx *pb.ForwardedTransaction) *pb.Fo
 		// Flush effects
 		if conn.EffectsCtx != nil {
 			if err := conn.EffectsCtx.Flush(); err != nil {
-				slog.Debug("forwarded transaction flush failed", "error", err)
+				respBuf.Reset()
+
+				if errors.Is(err, effects.ErrTxnAborted) {
+					w.WriteNullArray()
+				} else {
+					// Preserve the Redis error code. Transport-level ErrorMessage
+					// is prefixed with ERR by the forwarding engine.
+					w.WriteError("TRYAGAIN " + err.Error())
+				}
 			}
 		}
 	}
